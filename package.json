@@ -1,0 +1,19 @@
+{
+  "name": "rotafacil",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Roteirizador de entregas com vários entregadores, sem APIs pagas (OpenStreetMap + OSRM + VROOM).",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "leaflet": "^1.9.4"
+  }
+}

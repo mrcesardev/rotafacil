@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RotaFácil</title>
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- Login / cadastro -->
+  <div id="auth" class="auth hidden">
+    <h1 style="text-align:center;margin-bottom:1rem">🚚 RotaFácil</h1>
+    <div class="card">
+      <div class="tabs">
+        <button type="button" data-mode="login" class="active">Entrar</button>
+        <button type="button" data-mode="register">Criar conta</button>
+      </div>
+      <form id="authForm">
+        <div id="nameField" class="hidden">
+          <label for="authName">Nome da empresa</label>
+          <input id="authName" autocomplete="organization">
+        </div>
+        <label for="authEmail">E-mail</label>
+        <input id="authEmail" type="email" autocomplete="email" required>
+        <label for="authPassword">Senha</label>
+        <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required>
+        <p id="authError" class="warn hidden"></p>
+        <button class="primary" style="width:100%;margin-top:1rem">Continuar</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Aplicativo -->
+  <div id="app" class="app hidden">
+    <div class="mobile-tabs">
+      <button type="button" data-view="list" class="active">Lista</button>
+      <button type="button" data-view="map">Mapa</button>
+    </div>
+    <aside class="side">
+      <header>
+        <div class="row">
+          <h1>🚚 RotaFácil</h1>
+          <button type="button" class="shrink small" id="logout">Sair</button>
+        </div>
+        <div class="row" style="margin-top:.4rem">
+          <input type="date" id="date" aria-label="Data das entregas">
+          <button type="button" class="shrink" id="toggleSettings">⚙️ Configurar</button>
+        </div>
+      </header>
+
+      <section id="settings" class="hidden">
+        <h2>Ponto de partida e preferências</h2>
+        <p class="muted">Cole a localização da base ou clique em “Marcar no mapa”.</p>
+        <label for="depotInput">Base (link, coordenadas ou endereço)</label>
+        <div class="row">
+          <input id="depotInput" placeholder="-23.5505, -46.6333">
+          <button type="button" class="shrink" id="depotFromInput">Usar</button>
+        </div>
+        <button type="button" id="depotPick" style="margin-top:.5rem">📍 Marcar no mapa</button>
+        <p class="muted" id="depotInfo"></p>
+        <div class="row">
+          <div><label for="startTime">Saída</label><input id="startTime" type="time"></div>
+          <div><label for="serviceMin">Min. por entrega</label><input id="serviceMin" type="number" min="0" max="120"></div>
+        </div>
+        <label><input type="checkbox" id="returnDepot" style="width:auto"> Entregador volta para a base no fim</label>
+        <label for="waId">WhatsApp Cloud API: phone_number_id (opcional)</label>
+        <input id="waId" placeholder="ex.: 109876543210">
+        <button type="button" class="primary" id="saveSettings" style="margin-top:.6rem">Salvar</button>
+      </section>
+
+      <section>
+        <h2>Entregadores</h2>
+        <ul class="list" id="drivers"></ul>
+        <form id="driverForm" class="row" style="margin-top:.5rem">
+          <input id="driverName" placeholder="Nome" required>
+          <input id="driverPhone" placeholder="WhatsApp (opcional)">
+          <button class="shrink">+</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>Adicionar entregas</h2>
+        <p class="muted">Cole aqui as localizações recebidas no WhatsApp: uma por linha. O texto antes do link vira o nome do cliente. Ex.: <code>Maria - https://maps.app.goo.gl/...</code></p>
+        <textarea id="bulkText" placeholder="João - https://maps.google.com/?q=-23.56,-46.65&#10;Ana -23.5489, -46.6388&#10;Rua Augusta, 1500, São Paulo"></textarea>
+        <button type="button" class="primary" id="bulkAdd" style="margin-top:.5rem;width:100%">Adicionar</button>
+        <p id="bulkResult" class="muted"></p>
+      </section>
+
+      <section>
+        <div class="row">
+          <h2>Entregas do dia <span class="muted" id="countInfo"></span></h2>
+        </div>
+        <ul class="list" id="deliveries"></ul>
+      </section>
+
+      <section>
+        <h2>Rotas</h2>
+        <label><input type="checkbox" id="balance" checked style="width:auto"> Dividir as entregas de forma equilibrada</label>
+        <button type="button" class="primary" id="planBtn" style="width:100%;margin-top:.5rem">🧭 Gerar rotas</button>
+        <p id="planInfo" class="muted"></p>
+        <div id="routes"></div>
+      </section>
+    </aside>
+    <div class="mapwrap"><div id="map"></div></div>
+  </div>
+
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/common.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

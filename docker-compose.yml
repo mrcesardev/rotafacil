@@ -1,0 +1,33 @@
+# Sobe o RotaFácil completo: app + OSRM (ruas reais do OpenStreetMap) + VROOM (otimizador).
+# Antes do primeiro "docker compose up", prepare o mapa da região:
+#   ./scripts/prepare-osrm.sh sudeste
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OSRM_URL: http://osrm:5000
+      VROOM_URL: http://vroom:3000
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - osrm
+      - vroom
+
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    restart: unless-stopped
+    command: osrm-routed --algorithm mld --max-table-size 1000 --max-viaroute-size 1000 /data/region.osrm
+    volumes:
+      - ./osrm-data:/data
+
+  vroom:
+    image: ghcr.io/vroom-project/vroom-docker:v1.14.0
+    restart: unless-stopped
+    # O app envia a matriz de distâncias pronta (calculada pelo OSRM), então o VROOM
+    # não precisa de configuração de roteamento.
