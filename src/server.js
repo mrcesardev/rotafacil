@@ -7,7 +7,7 @@ const auth = require('./auth');
 const { resolveLocation, splitBulk } = require('./location');
 const { planDriverRoute, PlanError } = require('./planning');
 const recipient = require('./recipient');
-const { driverReport } = require('./reports');
+const { driverReport, farFromPin, reviewPin, ReviewError } = require('./reports');
 const D = require('./domain');
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
@@ -489,14 +489,34 @@ function createApp({ db }) {
   }));
 
   // ---------- Relatórios ----------
-  app.get('/api/reports/drivers', requireAuth, wrap(async (req, res) => {
-    const today = D.todayIn(req.org.timezone);
+  /** Período do relatório (padrão: últimos 7 dias no fuso da empresa). */
+  const period = (req) => {
     const shift = (date, days) => new Date(Date.parse(`${date}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
-    const to = isDate(req.query.to) ? req.query.to : today;
+    const to = isDate(req.query.to) ? req.query.to : D.todayIn(req.org.timezone);
     const from = isDate(req.query.from) ? req.query.from : shift(to, -6);
     if (from > to) throw new HttpError(400, 'A data inicial é depois da final.');
     if (Date.parse(to) - Date.parse(from) > 366 * 86400000) throw new HttpError(400, 'Escolha um período de até 1 ano.');
+    return { from, to };
+  };
+
+  app.get('/api/reports/drivers', requireAuth, wrap(async (req, res) => {
+    const { from, to } = period(req);
     res.json({ from, to, ...(await driverReport(db, req.org.id, from, to)) });
+  }));
+
+  // entregas marcadas longe do pino, para o operador corrigir o local do cliente
+  app.get('/api/reports/far-from-pin', requireAuth, wrap(async (req, res) => {
+    const { from, to } = period(req);
+    res.json({ from, to, ...(await farFromPin(db, req.org.id, from, to)) });
+  }));
+
+  app.post('/api/deliveries/:id/pin-review', requireAuth, wrap(async (req, res) => {
+    try {
+      res.json(await reviewPin(db, req.org, req.user.id, Number(req.params.id) || 0, req.body || {}));
+    } catch (e) {
+      if (e instanceof ReviewError) throw new HttpError(e.status, e.message);
+      throw e;
+    }
   }));
 
   // ---------- Página do entregador (acesso por link, sem login) ----------

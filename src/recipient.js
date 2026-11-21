@@ -129,7 +129,7 @@ function register(app, db, { wrap }) {
          WHERE id = $1`,
         [d.id, customerId, reference, lat, lng, CONSENT_VERSION],
       );
-      await D.savePlace(q, d.org_id, customerId, { lat, lng, address: 'Marcado pelo cliente', reference, confirmed: true });
+      await D.savePlace(q, d.org_id, customerId, { lat, lng, address: 'Marcado pelo cliente', reference, confirmed: true, verifiedBy: 'cliente' });
       await D.logEvent(q, { orgId: d.org_id, type: 'delivery.customer_confirmed', actor: 'cliente', deliveryId: d.id, data: { consent_version: CONSENT_VERSION } });
       return { status: 200 };
     });

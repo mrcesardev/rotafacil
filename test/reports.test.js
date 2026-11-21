@@ -113,3 +113,99 @@ test('relatório pela API: plano do operador é a referência, GPS e período', 
     await db.drop();
   }
 });
+
+test('longe do pino: lista, corrige pelo GPS e o cliente passa a usar o local certo', async () => {
+  const db = await createTestDb();
+  const server = createApp({ db }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const jar = { a: '', b: '' };
+  const call = async (path, { method = 'GET', body, as = 'a' } = {}) => {
+    const res = await fetch(base + path, {
+      method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(as ? { cookie: jar[as] } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const set = res.headers.get('set-cookie');
+    if (set && as) jar[as] = set.split(';')[0];
+    return { status: res.status, data: await res.json().catch(() => null) };
+  };
+  try {
+    await call('/api/auth/register', { method: 'POST', body: { org_name: 'Loja', email: 'p@p.com', password: '12345678' } });
+    await call('/api/settings', { method: 'PUT', body: { depot_lat: -16.68, depot_lng: -49.25 } });
+    const drv = (await call('/api/drivers', { method: 'POST', body: { name: 'Carlos' } })).data;
+    const DATE = '2026-11-20';
+    const wrongPin = { lat: -16.700, lng: -49.250 };
+    const realDoor = { lat: -16.704, lng: -49.250 }; // ~445 m ao sul
+    const mk = (body) => call('/api/deliveries', { method: 'POST', body: { date: DATE, driver_id: drv.id, ...body } });
+    const ana = (await mk({ customer_name: 'Ana', phone: '62999990001', ...wrongPin })).data.delivery;
+    const beto = (await mk({ customer_name: 'Beto', phone: '62999990002', lat: -16.69, lng: -49.24 })).data.delivery;
+    const caio = (await mk({ customer_name: 'Caio', phone: '62999990003', lat: -16.71, lng: -49.26 })).data.delivery;
+    // pedido futuro da Ana já criado com o pino errado (deve ser corrigido junto)
+    const anaTomorrow = (await call('/api/deliveries', { method: 'POST', body: { date: '2026-11-22', customer_name: 'Ana', phone: '62999990001', ...wrongPin } })).data.delivery;
+
+    const route = (await call('/api/routes/plan', { method: 'POST', body: { date: DATE } })).data.routes[0];
+    const mark = (id, body) => call(`/api/driver/${route.token}/stops/${id}`, { method: 'POST', as: '', body });
+    await mark(ana.id, { status: 'entregue', ...realDoor });                       // longe
+    await mark(beto.id, { status: 'entregue', lat: -16.6901, lng: -49.2401 });     // perto
+    await mark(caio.id, { status: 'entregue', lat: -16.72, lng: -49.26 });         // longe (~1,1 km)
+
+    let far = (await call(`/api/reports/far-from-pin?from=${DATE}&to=${DATE}`)).data;
+    assert.deepStrictEqual(far.items.map((i) => i.customer_name).sort(), ['Ana', 'Caio']);
+    const itemAna = far.items.find((i) => i.delivery_id === ana.id);
+    assert.ok(itemAna.distance_m > 400 && itemAna.distance_m < 500, `distância ${itemAna.distance_m}`);
+    assert.strictEqual(itemAna.review, null);
+    assert.strictEqual(far.pending, 2);
+    const rep = (await call(`/api/reports/drivers?from=${DATE}&to=${DATE}`)).data;
+    assert.strictEqual(rep.totals.far_from_pin, 2, 'mesmo número do relatório');
+
+    // Ana: usar o GPS do entregador
+    let r = await call(`/api/deliveries/${ana.id}/pin-review`, { method: 'POST', body: { decision: 'gps' } });
+    assert.strictEqual(r.status, 200, JSON.stringify(r.data));
+    assert.strictEqual(r.data.updated_pending, 1, 'pedido futuro corrigido junto');
+    const fixedTomorrow = (await call('/api/deliveries?date=2026-11-22')).data.find((d) => d.id === anaTomorrow.id);
+    assert.deepStrictEqual([fixedTomorrow.lat, fixedTomorrow.lng], [realDoor.lat, realDoor.lng]);
+    const histAna = await db.one('SELECT lat, lng FROM deliveries WHERE id = $1', [ana.id]);
+    assert.deepStrictEqual([histAna.lat, histAna.lng], [wrongPin.lat, wrongPin.lng], 'histórico não muda');
+    // próximo pedido da Ana sem local: usa o corrigido
+    const next = (await call('/api/deliveries', { method: 'POST', body: { date: '2026-11-25', customer_name: 'Ana', phone: '(62) 99999-0001' } })).data;
+    assert.strictEqual(next.recurring, true);
+    assert.deepStrictEqual([next.delivery.lat, next.delivery.lng], [realDoor.lat, realDoor.lng]);
+
+    // Caio: o pino estava certo (entregador marcou de longe)
+    r = await call(`/api/deliveries/${caio.id}/pin-review`, { method: 'POST', body: { decision: 'ok' } });
+    assert.strictEqual(r.status, 200);
+    far = (await call(`/api/reports/far-from-pin?from=${DATE}&to=${DATE}`)).data;
+    assert.strictEqual(far.pending, 0);
+    assert.deepStrictEqual(far.items.map((i) => i.review).sort(), ['gps', 'ok']);
+    const caioNext = (await call('/api/deliveries', { method: 'POST', body: { date: '2026-11-25', customer_name: 'Caio', phone: '62999990003' } })).data;
+    assert.deepStrictEqual([caioNext.delivery.lat, caioNext.delivery.lng], [-16.71, -49.26], 'pino original mantido');
+
+    // validações e isolamento
+    assert.strictEqual((await call(`/api/deliveries/${beto.id}/pin-review`, { method: 'POST', body: { decision: 'mapa' } })).status, 400);
+    assert.strictEqual((await call(`/api/deliveries/${beto.id}/pin-review`, { method: 'POST', body: { decision: 'xpto' } })).status, 400);
+    assert.strictEqual((await call(`/api/deliveries/${anaTomorrow.id}/pin-review`, { method: 'POST', body: { decision: 'ok' } })).status, 400, 'pendente não se revisa');
+    await call('/api/auth/register', { method: 'POST', as: 'b', body: { org_name: 'Outra', email: 'o@o.com', password: '12345678' } });
+    assert.strictEqual((await call(`/api/deliveries/${caio.id}/pin-review`, { method: 'POST', as: 'b', body: { decision: 'ok' } })).status, 404);
+    assert.strictEqual((await call(`/api/reports/far-from-pin?from=${DATE}&to=${DATE}`, { as: 'b' })).data.items.length, 0);
+  } finally {
+    server.close();
+    await db.drop();
+  }
+});
+
+test('local verificado mais recente vence: correção do operador depois da confirmação do cliente', async () => {
+  const db = await createTestDb();
+  const D = require('../src/domain');
+  try {
+    const org = await db.one(`INSERT INTO organizations (name) VALUES ('X') RETURNING id`);
+    const c = await db.one(`INSERT INTO customers (org_id, name) VALUES ($1, 'Y') RETURNING id`, [org.id]);
+    await D.savePlace(db, org.id, c.id, { lat: -16.70, lng: -49.25, confirmed: true, verifiedBy: 'cliente' });
+    await D.savePlace(db, org.id, c.id, { lat: -16.60, lng: -49.20 }); // só usado, não verificado
+    assert.strictEqual((await D.lastPlace(db, c.id)).lat, -16.70, 'verificado vence o apenas usado');
+    await D.savePlace(db, org.id, c.id, { lat: -16.704, lng: -49.25, verifiedBy: 'operador' });
+    const p = await D.lastPlace(db, c.id);
+    assert.deepStrictEqual([p.lat, p.verified_by], [-16.704, 'operador']);
+  } finally {
+    await db.drop();
+  }
+});

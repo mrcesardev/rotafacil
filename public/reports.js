@@ -3,6 +3,9 @@ const $ = (id) => document.getElementById(id);
 let me;
 let data;
 let selected = null;
+let pins = { items: [], pending: 0 };
+let openPin = null;   // entrega com o mapa aberto
+let pinMap = null;
 
 const nf1 = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const nf0 = new Intl.NumberFormat('pt-BR');
@@ -54,7 +57,8 @@ $('apply').addEventListener('click', () => { markPreset(null); load(); });
 async function load() {
   $('status').textContent = 'Carregando…';
   try {
-    data = await api(`/api/reports/drivers?from=${$('from').value}&to=${$('to').value}`);
+    const q = `from=${$('from').value}&to=${$('to').value}`;
+    [data, pins] = await Promise.all([api(`/api/reports/drivers?${q}`), api(`/api/reports/far-from-pin?${q}`)]);
   } catch (e) {
     $('status').textContent = e.message;
     return;
@@ -78,7 +82,9 @@ function render() {
     tile('Km planejados', km(t.km_planned), `${nf0.format(t.routes)} rota(s)`),
     tile('Km pelo GPS', km(t.km_gps), t.gps_coverage == null ? 'sem entregas concluídas' : `estimado · GPS em ${pct(t.gps_coverage)} das paradas`, t.gps_coverage != null && t.gps_coverage < 0.7),
     tile('No horário', pct(t.on_time_rate), t.late ? `${t.late} atrasada(s) · média +${t.avg_delay_min} min` : `até ${defs.tolerance_min} min da previsão`),
-    tile('Longe do pino', nf0.format(t.far_from_pin), t.far_from_pin ? 'confira esses locais' : `mais de ${defs.far_from_pin_m} m`, t.far_from_pin > 0),
+    tile('Longe do pino', nf0.format(t.far_from_pin),
+      pins.pending ? `<a href="#pinCard">${pins.pending} para revisar</a>` : (t.far_from_pin ? 'todas revisadas' : `mais de ${defs.far_from_pin_m} m`),
+      pins.pending > 0),
   ].join('');
 
   const tbody = $('drivers').querySelector('tbody');
@@ -99,6 +105,7 @@ function render() {
       <td class="num">${t.late ? `+${t.avg_delay_min} min` : '—'}</td><td class="num">${t.far_from_pin}</td></tr>` : '';
 
   renderDaily();
+  renderPins();
   $('defs').innerHTML = `
     <li><b>Entregas</b>: as que estavam na rota do entregador no dia. <b>Sucesso</b> = entregues ÷ (entregues + falhas).</li>
     <li><b>Km planejados</b>: distância da rota gerada pelo operador. Recálculos feitos pelo entregador no meio do dia não entram (cobrem só o trecho restante).</li>
@@ -107,6 +114,85 @@ function render() {
     <li><b>Longe do pino</b>: entregues a mais de ${defs.far_from_pin_m} m do local cadastrado. Costuma indicar pino errado: vale corrigir o cadastro do cliente.</li>
     <li>Distâncias são reais pelas ruas só com o OSRM configurado; sem ele, também são estimativas.</li>`;
 }
+
+// ---------- entregas longe do pino ----------
+const REVIEW_LABEL = { gps: '✅ corrigido para o local do GPS', mapa: '✅ ajustado no mapa', ok: '✔️ pino mantido' };
+const fmtM = (m) => (m >= 1000 ? `${nf1.format(m / 1000)} km` : `${m} m`);
+
+function renderPins() {
+  $('farM').textContent = pins.far_from_pin_m;
+  const show = $('showReviewed').checked;
+  const list = pins.items.filter((i) => show || !i.review);
+  $('pinCount').textContent = pins.items.length ? `(${pins.pending} para revisar de ${pins.items.length})` : '';
+  if (openPin && !list.some((i) => i.delivery_id === openPin)) openPin = null;
+  $('pinList').innerHTML = list.length ? list.map((i) => {
+    const who = i.anonymized ? '<i>Cliente apagado (LGPD)</i>' : esc(i.customer_name || 'Sem nome');
+    const actions = i.review ? `<span class="chip ok">${REVIEW_LABEL[i.review] || i.review}</span>` : `
+      <div class="row" style="margin-top:.4rem">
+        <button type="button" class="small" data-pin-map="${i.delivery_id}">${openPin === i.delivery_id ? 'Fechar mapa' : '🗺️ Ver no mapa'}</button>
+        ${i.anonymized ? '' : `<button type="button" class="small primary" data-pin-gps="${i.delivery_id}">Usar local do GPS</button>`}
+        <button type="button" class="small" data-pin-ok="${i.delivery_id}">Pino estava certo</button>
+      </div>`;
+    return `
+    <li>
+      <div class="grow">
+        <div class="title">${who} <span class="muted">· ${brDate(i.date)} · ${esc(i.driver_name)}</span></div>
+        <div class="muted">Marcado a <b>${fmtM(i.distance_m)}</b> do pino${i.reviewed_at ? ` · revisado em ${new Date(i.reviewed_at).toLocaleDateString('pt-BR')}` : ''}</div>
+        ${actions}
+        ${openPin === i.delivery_id ? `
+          <div id="pinMap" class="pin-map"></div>
+          <p class="muted pin-legend"><b class="lg p">P</b> pino cadastrado · <b class="lg e"></b> onde o entregador marcou (círculo) · <b class="lg n">✓</b> novo local (arraste)</p>
+          <button type="button" class="small primary" data-pin-save="${i.delivery_id}">Salvar o local do marcador ✓</button>` : ''}
+      </div>
+    </li>`;
+  }).join('') : `<li class="muted">${pins.items.length ? 'Tudo revisado neste período. 👍' : 'Nenhuma entrega longe do pino neste período.'}</li>`;
+  if (openPin) drawPinMap(pins.items.find((i) => i.delivery_id === openPin));
+}
+
+async function drawPinMap(i) {
+  if (pinMap) { pinMap.remove(); pinMap = null; }
+  ({ map: pinMap } = await makeMap('pinMap'));
+  const pin = L.marker([i.lat, i.lng], { icon: numberedIcon('P', '#c0392b') }).bindTooltip('Pino cadastrado').addTo(pinMap);
+  // círculo (não pino) para continuar visível embaixo do marcador arrastável, que começa no mesmo ponto
+  const gps = L.circleMarker([i.gps_lat, i.gps_lng], { radius: 16, color: '#1e8e3e', weight: 3, fillColor: '#1e8e3e', fillOpacity: 0.2 })
+    .bindTooltip('Onde o entregador marcou').addTo(pinMap);
+  L.polyline([[i.lat, i.lng], [i.gps_lat, i.gps_lng]], { color: '#888', dashArray: '4 6', weight: 2 }).addTo(pinMap);
+  const pick = L.marker([i.gps_lat, i.gps_lng], { icon: numberedIcon('✓', '#1f77b4'), draggable: true, zIndexOffset: 1000 })
+    .bindTooltip('Novo local: arraste até a entrada certa').addTo(pinMap);
+  pinMap.on('click', (e) => pick.setLatLng(e.latlng));
+  pinMap.fitBounds(L.featureGroup([pin, gps]).getBounds(), { padding: [40, 40], maxZoom: 18 });
+  drawPinMap.pick = pick;
+}
+
+async function review(id, body) {
+  try {
+    const r = await api(`/api/deliveries/${id}/pin-review`, { method: 'POST', body });
+    const extra = r.updated_pending ? ` ${r.updated_pending} entrega(s) pendente(s) do cliente também foram corrigidas.` : '';
+    toast(body.decision === 'ok' ? 'Pino mantido.' : `Local do cliente corrigido.${extra}`, 4500);
+    openPin = null;
+    await load();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$('pinList').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.pinMap) {
+    const id = Number(b.dataset.pinMap);
+    openPin = openPin === id ? null : id;
+    renderPins();
+  } else if (b.dataset.pinGps) {
+    review(Number(b.dataset.pinGps), { decision: 'gps' });
+  } else if (b.dataset.pinOk) {
+    review(Number(b.dataset.pinOk), { decision: 'ok' });
+  } else if (b.dataset.pinSave) {
+    const p = drawPinMap.pick.getLatLng();
+    review(Number(b.dataset.pinSave), { decision: 'mapa', lat: p.lat, lng: p.lng });
+  }
+});
+$('showReviewed').addEventListener('change', renderPins);
 
 function renderDaily() {
   const card = $('dailyCard');

@@ -58,17 +58,23 @@ async function findOrCreateCustomer(q, orgId, { name, phone }) {
   );
 }
 
-/** Último local do cliente (de preferência um que ele mesmo confirmou). */
+/**
+ * Local a usar na próxima entrega: o verificado mais recentemente (confirmado
+ * pelo cliente ou corrigido pelo operador); sem nenhum verificado, o último usado.
+ */
 function lastPlace(q, customerId) {
   return q.one(
     `SELECT * FROM customer_places WHERE customer_id = $1
-     ORDER BY confirmed_by_customer DESC, last_used_at DESC LIMIT 1`,
+     ORDER BY verified_at DESC NULLS LAST, last_used_at DESC LIMIT 1`,
     [customerId],
   );
 }
 
-/** Guarda o local para a próxima entrega; pontos a menos de ~30 m contam como o mesmo lugar. */
-async function savePlace(q, orgId, customerId, { lat, lng, address = null, reference = null, confirmed = false }) {
+/**
+ * Guarda o local para a próxima entrega; pontos a menos de ~30 m contam como o mesmo lugar.
+ * verifiedBy: 'cliente' (ele marcou no link) ou 'operador' (correção do pino).
+ */
+async function savePlace(q, orgId, customerId, { lat, lng, address = null, reference = null, confirmed = false, verifiedBy = null }) {
   const near = await q.one(
     `SELECT id FROM customer_places WHERE customer_id = $1 AND abs(lat - $2) < 0.0003 AND abs(lng - $3) < 0.0003
      ORDER BY last_used_at DESC LIMIT 1`,
@@ -77,14 +83,17 @@ async function savePlace(q, orgId, customerId, { lat, lng, address = null, refer
   if (near) {
     await q.query(
       `UPDATE customer_places SET lat = $2, lng = $3, address = COALESCE($4, address), reference = COALESCE($5, reference),
-       confirmed_by_customer = confirmed_by_customer OR $6, last_used_at = now() WHERE id = $1`,
-      [near.id, lat, lng, address, reference, confirmed],
+       confirmed_by_customer = confirmed_by_customer OR $6, last_used_at = now(),
+       verified_at = CASE WHEN $7::text IS NULL THEN verified_at ELSE now() END,
+       verified_by = COALESCE($7, verified_by)
+       WHERE id = $1`,
+      [near.id, lat, lng, address, reference, confirmed, verifiedBy],
     );
   } else {
     await q.query(
-      `INSERT INTO customer_places (org_id, customer_id, lat, lng, address, reference, confirmed_by_customer)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [orgId, customerId, lat, lng, address, reference, confirmed],
+      `INSERT INTO customer_places (org_id, customer_id, lat, lng, address, reference, confirmed_by_customer, verified_at, verified_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END, $8)`,
+      [orgId, customerId, lat, lng, address, reference, confirmed, verifiedBy],
     );
   }
 }

@@ -67,6 +67,17 @@ A página mostra:
 | **No horário** | Entregues até 15 min depois da previsão; atraso médio das demais |
 | **Longe do pino** | Entregues a mais de 150 m do local cadastrado. Costuma indicar pino errado |
 
+**Entregas longe do pino:** a mesma página lista cada entrega marcada a mais de 150 m do local cadastrado,
+com um mapa do pino, de onde o entregador marcou e de um marcador arrastável. Para cada uma, o operador escolhe:
+
+- **Usar local do GPS:** o local certo é onde o entregador marcou;
+- **Ajustar no mapa:** arrasta o marcador até a entrada certa;
+- **Pino estava certo:** por exemplo, o entregador marcou de longe.
+
+Ao corrigir, o novo local vira o **local verificado** do cliente, e o próximo pedido dele já usa esse local.
+As entregas pendentes dele que ainda estavam no pino antigo são corrigidas junto. A entrega concluída não muda:
+o histórico continua como aconteceu, marcado como revisado.
+
 Clicando num entregador aparece o **dia a dia** dele. O botão **Planilha (CSV)** baixa os dados diários
 no formato do Excel e do Google Planilhas em português (`;` e vírgula decimal).
 

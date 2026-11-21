@@ -14,6 +14,14 @@
  *  - longe do pino: marcada a mais de FAR_M metros do local cadastrado.
  */
 const { haversine } = require('./routing/matrix');
+const { logEvent, savePlace } = require('./domain');
+
+/** Última marcação (entregue/não entregue) feita pelo entregador para a entrega d. */
+const LAST_MARK = `
+  SELECT e.lat, e.lng, e.at FROM events e
+  WHERE e.delivery_id = d.id AND e.type = 'delivery.status' AND e.actor_type = 'entregador'
+    AND e.data->>'status' IN ('entregue', 'falhou')
+  ORDER BY e.at DESC LIMIT 1`;
 
 const TOLERANCE_MIN = 15;
 const FAR_M = 150;
@@ -44,12 +52,7 @@ async function driverReport(db, orgId, from, to) {
        ORDER BY (p.created_by = 'operador') DESC, p.version DESC LIMIT 1
      ) ref ON true
      LEFT JOIN route_stops ref_s ON ref_s.plan_id = ref.id AND ref_s.delivery_id = d.id
-     LEFT JOIN LATERAL (
-       SELECT e.lat, e.lng, e.at FROM events e
-       WHERE e.delivery_id = d.id AND e.type = 'delivery.status' AND e.actor_type = 'entregador'
-         AND e.data->>'status' IN ('entregue', 'falhou')
-       ORDER BY e.at DESC LIMIT 1
-     ) ev ON true
+     LEFT JOIN LATERAL (${LAST_MARK}) ev ON true
      WHERE cs.org_id = $1 AND cs.date BETWEEN $2 AND $3`,
     [orgId, from, to],
   );
@@ -151,4 +154,92 @@ function aggregate({ routes, stops, drivers }) {
   };
 }
 
-module.exports = { driverReport, aggregate, TOLERANCE_MIN, FAR_M };
+// ---------- entregas longe do pino ----------
+
+/** Entregas do período marcadas como entregues a mais de FAR_M do pino, com a revisão (se houver). */
+async function farFromPin(db, orgId, from, to) {
+  const rows = await db.many(
+    `SELECT d.id AS delivery_id, d.date, d.lat, d.lng, d.customer_id, c.name AS customer_name, c.phone,
+            c.anonymized_at IS NOT NULL AS anonymized, dr.name AS driver_name,
+            ev.lat AS gps_lat, ev.lng AS gps_lng, ev.at AS gps_at,
+            rv.data->>'decision' AS review, rv.at AS reviewed_at
+     FROM current_stops cs
+     JOIN deliveries d ON d.id = cs.delivery_id
+     JOIN customers c ON c.id = d.customer_id
+     JOIN drivers dr ON dr.id = cs.driver_id
+     JOIN LATERAL (${LAST_MARK}) ev ON true
+     LEFT JOIN LATERAL (
+       SELECT e.data, e.at FROM events e WHERE e.delivery_id = d.id AND e.type = 'pin.reviewed'
+       ORDER BY e.at DESC LIMIT 1
+     ) rv ON true
+     WHERE cs.org_id = $1 AND cs.date BETWEEN $2 AND $3 AND d.status = 'entregue'
+       AND d.lat IS NOT NULL AND ev.lat IS NOT NULL
+     ORDER BY d.date DESC, d.id`,
+    [orgId, from, to],
+  );
+  const items = rows
+    .map((r) => ({ ...r, distance_m: Math.round(haversine({ lat: r.lat, lng: r.lng }, { lat: r.gps_lat, lng: r.gps_lng })) }))
+    .filter((r) => r.distance_m > FAR_M);
+  return { items, pending: items.filter((i) => !i.review).length, far_from_pin_m: FAR_M };
+}
+
+class ReviewError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+/**
+ * Revisão de uma entrega longe do pino:
+ *  - 'gps':  o local certo é onde o entregador marcou;
+ *  - 'mapa': o operador escolheu o ponto no mapa (lat/lng);
+ *  - 'ok':   o pino estava certo (ex.: entregador marcou de longe).
+ * Nos dois primeiros casos, o local corrigido vira o local verificado do cliente
+ * e as entregas pendentes dele que ainda estavam no pino antigo são atualizadas.
+ * A entrega concluída não muda: o histórico continua como aconteceu.
+ */
+async function reviewPin(db, org, userId, deliveryId, { decision, lat, lng }) {
+  if (!['gps', 'mapa', 'ok'].includes(decision)) throw new ReviewError(400, 'Decisão inválida.');
+  return db.tx(async (q) => {
+    const d = await q.one(
+      `SELECT d.*, c.anonymized_at FROM deliveries d JOIN customers c ON c.id = d.customer_id
+       WHERE d.id = $1 AND d.org_id = $2 FOR UPDATE OF d`,
+      [deliveryId, org.id],
+    );
+    if (!d) throw new ReviewError(404, 'Entrega não encontrada.');
+    if (d.status !== 'entregue') throw new ReviewError(400, 'Só entregas concluídas podem ser revisadas.');
+
+    let point = null;
+    if (decision === 'gps') {
+      const mark = await q.one(`SELECT lat, lng FROM (${LAST_MARK.replace('d.id', '$1')}) m`, [d.id]);
+      if (!mark || mark.lat == null) throw new ReviewError(400, 'Esta entrega não tem GPS do entregador.');
+      point = { lat: mark.lat, lng: mark.lng };
+    } else if (decision === 'mapa') {
+      const la = Number(lat);
+      const ln = Number(lng);
+      if (lat == null || lng == null || !Number.isFinite(la) || !Number.isFinite(ln) || Math.abs(la) > 90 || Math.abs(ln) > 180) {
+        throw new ReviewError(400, 'Marque o local no mapa.');
+      }
+      point = { lat: la, lng: ln };
+    }
+
+    let updatedPending = 0;
+    if (point) {
+      if (d.anonymized_at) throw new ReviewError(400, 'Os dados deste cliente foram apagados (LGPD).');
+      await savePlace(q, org.id, d.customer_id, { ...point, address: 'Corrigido pelo operador', verifiedBy: 'operador' });
+      if (d.lat != null) {
+        updatedPending = (await q.query(
+          `UPDATE deliveries SET lat = $2, lng = $3, address = 'Corrigido pelo operador', location_source = 'mapa'
+           WHERE customer_id = $1 AND status = 'pendente' AND abs(lat - $4) < 0.0003 AND abs(lng - $5) < 0.0003`,
+          [d.customer_id, point.lat, point.lng, d.lat, d.lng],
+        )).rowCount;
+      }
+    }
+    await logEvent(q, {
+      orgId: org.id, type: 'pin.reviewed', userId, deliveryId: d.id,
+      lat: point?.lat ?? null, lng: point?.lng ?? null,
+      data: { decision, updated_pending: updatedPending },
+    });
+    return { decision, updated_pending: updatedPending };
+  });
+}
+
+module.exports = { driverReport, aggregate, farFromPin, reviewPin, ReviewError, TOLERANCE_MIN, FAR_M };
