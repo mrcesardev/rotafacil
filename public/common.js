@@ -65,9 +65,13 @@ function waPhone(phone) {
 async function makeMap(el) {
   const cfg = await fetch('/api/config').then((r) => r.json()).catch(() => ({}));
   const map = L.map(el, { zoomControl: true }).setView([-15.78, -47.93], 4);
-  L.tileLayer(cfg.tileUrl || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  const streets = L.tileLayer(cfg.tileUrl || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: cfg.tileAttribution || '&copy; colaboradores do OpenStreetMap',
   }).addTo(map);
+  if (cfg.satelliteUrl) {
+    const sat = L.tileLayer(cfg.satelliteUrl, { maxZoom: 19, attribution: cfg.satelliteAttribution || '' });
+    L.control.layers({ Mapa: streets, Satélite: sat }, null, { position: 'topright' }).addTo(map);
+  }
   return { map, cfg };
 }

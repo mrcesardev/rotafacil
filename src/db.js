@@ -82,6 +82,13 @@ function open(file = DB_PATH) {
   addColumn(db, 'routes', 'start_lat', 'REAL');
   addColumn(db, 'routes', 'start_lng', 'REAL');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_driver_date ON routes(driver_id, date)');
+
+  // link do destinatário: ele marca onde quer receber e acompanha a entrega
+  addColumn(db, 'deliveries', 'public_token', 'TEXT');
+  addColumn(db, 'deliveries', 'reference', 'TEXT');                 // "apto 32, portão azul" (escrito pelo cliente)
+  addColumn(db, 'deliveries', 'customer_confirmed_at', 'TEXT');     // quando o cliente confirmou o local
+  addColumn(db, 'deliveries', 'consent_at', 'TEXT');                // aceite de uso dos dados (LGPD)
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_deliveries_public_token ON deliveries(public_token)');
   return db;
 }
 

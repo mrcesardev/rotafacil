@@ -109,6 +109,21 @@ button:disabled { opacity: .55; cursor: progress; }
   .app:not(.show-map) .mapwrap { display: none; }
 }
 
+/* página do destinatário */
+.recipient { max-width: 560px; margin: 0 auto; padding: 0 16px 2rem; }
+.recipient header { padding: 1rem 0 .4rem; }
+.recipient header p { margin: .2rem 0; }
+.recipient #map { height: 46vh; min-height: 260px; border-radius: 12px; border: 1px solid var(--border); margin: .4rem 0 .6rem; }
+.recipient #statusCard { margin: .6rem 0; }
+.recipient #statusCard p { margin: .35rem 0; }
+.recipient .big { font-size: 1.1rem; }
+.recipient #gps { width: 100%; padding: .75rem; }
+.recipient #results li { border: 0; padding: .2rem 0; }
+.link-box { margin-top: .5rem; padding: .6rem; border: 1px dashed var(--border); border-radius: 8px; }
+.chip { display: inline-block; font-size: .75rem; padding: .05rem .45rem; border-radius: 999px; border: 1px solid var(--border); margin-left: .25rem; white-space: nowrap; }
+.chip.ok { color: var(--ok); border-color: currentColor; }
+.chip.wait { color: var(--warn-text); background: var(--warn-bg); border-color: transparent; }
+
 /* página do entregador */
 .driver { max-width: 640px; margin: 0 auto; padding: 0 16px 2rem; }
 .driver header { padding: 1rem 0 .5rem; }

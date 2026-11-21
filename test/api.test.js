@@ -183,3 +183,97 @@ test('webhook do WhatsApp cria entrega a partir da localização', async () => {
   assert.strictEqual(d.customer_name, 'Cliente Zap');
   assert.strictEqual(d.driver_id, null, 'chega sem entregador; o operador distribui');
 });
+
+test('destinatário: link → marca o local → acompanha → entregue', async () => {
+  // operador cria a entrega só com o nome e gera o link
+  let r = await call('/api/deliveries', { method: 'POST', body: { date: DATE, customer_name: 'Rita Souza', phone: '11977776666', driver_id: carlos.id, notes: 'cliente chata, cobrar frete' } });
+  const id = r.data.delivery.id;
+  r = await call(`/api/deliveries/${id}/link`, { method: 'POST' });
+  const token = r.data.token;
+  assert.match(r.data.path, /^\/r\//);
+  assert.strictEqual((await call(`/api/deliveries/${id}/link`, { method: 'POST' })).data.token, token, 'link é estável');
+
+  const saved = cookie; cookie = '';
+  let page = await call(`/api/r/${token}`);
+  assert.strictEqual(page.status, 200);
+  assert.strictEqual(page.data.phase, 'confirmar');
+  assert.strictEqual(page.data.customer_name, 'Rita Souza');
+  assert.strictEqual(page.data.operator_name, 'Loja Teste');
+  assert.ok(!JSON.stringify(page.data).includes('cobrar frete'), 'observação interna não pode vazar');
+  assert.deepStrictEqual(page.data.map_center, { lat: -23.55, lng: -46.63 });
+
+  // validações
+  assert.strictEqual((await call(`/api/r/${token}`, { method: 'POST', body: { lat: -23.47, lng: -46.57 } })).status, 400, 'exige aceite');
+  assert.strictEqual((await call(`/api/r/${token}`, { method: 'POST', body: { consent: true } })).status, 400, 'exige pino');
+  assert.strictEqual((await call('/api/r/nao-existe')).status, 404);
+
+  r = await call(`/api/r/${token}`, { method: 'POST', body: { lat: -23.47, lng: -46.57, consent: true, reference: 'Portão azul', phone: '11955554444' } });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.data));
+  assert.strictEqual(r.data.phase, 'confirmado');
+  assert.strictEqual(r.data.reference, 'Portão azul');
+  cookie = saved;
+
+  let d = (await deliveries()).find((x) => x.id === id);
+  assert.ok(d.customer_confirmed_at && d.consent_at);
+  assert.strictEqual(d.lat, -23.47);
+  assert.strictEqual(d.phone, '11955554444');
+
+  // operador gera a rota: cliente passa a ver a fila
+  const plan = await call('/api/routes/plan', { method: 'POST', body: { date: DATE, driver_ids: [carlos.id] } });
+  assert.ok(plan.data.results[0].ok, JSON.stringify(plan.data));
+  const routeToken = plan.data.routes.find((x) => x.driver_id === carlos.id).token;
+  cookie = '';
+  page = await call(`/api/r/${token}`);
+  assert.strictEqual(page.data.phase, 'em_rota');
+  assert.strictEqual(page.data.tracking.driver_first_name, 'Carlos');
+  assert.match(page.data.tracking.eta, /^\d{2}:\d{2}$/);
+  const stops = (await call(`/api/driver/${routeToken}`)).data.stops;
+  const mine = stops.find((s) => s.id === id);
+  assert.strictEqual(mine.reference, 'Portão azul', 'entregador vê a referência');
+  const expectedAhead = stops.filter((s) => s.status === 'pendente' && s.stop_order < mine.stop_order).length;
+  assert.strictEqual(page.data.tracking.stops_ahead, expectedAhead);
+
+  // em rota, o cliente não pode mais mudar o local
+  r = await call(`/api/r/${token}`, { method: 'POST', body: { lat: -23.4, lng: -46.5, consent: true } });
+  assert.strictEqual(r.status, 409);
+
+  // entregador marca as anteriores e depois a dela
+  for (const s of stops.filter((x) => x.status === 'pendente' && x.stop_order < mine.stop_order)) {
+    await call(`/api/driver/${routeToken}/stops/${s.id}`, { method: 'POST', body: { status: 'entregue' } });
+  }
+  page = await call(`/api/r/${token}`);
+  assert.strictEqual(page.data.tracking.stops_ahead, 0);
+  await call(`/api/driver/${routeToken}/stops/${id}`, { method: 'POST', body: { status: 'entregue' } });
+  page = await call(`/api/r/${token}`);
+  assert.strictEqual(page.data.phase, 'entregue');
+  assert.ok(page.data.delivered_at);
+  assert.strictEqual(page.data.tracking, undefined);
+  cookie = saved;
+});
+
+test('destinatário: outra conta não gera link de entrega alheia e há limite de tentativas', async () => {
+  const saved = cookie;
+  cookie = '';
+  await call('/api/auth/login', { method: 'POST', body: { email: 'c@d.com', password: '12345678' } });
+  assert.strictEqual((await call('/api/deliveries/1/link', { method: 'POST' })).status, 404);
+  cookie = '';
+  let last;
+  for (let i = 0; i < 25; i++) last = await call('/api/r/qualquer', { method: 'POST', body: {} });
+  assert.strictEqual(last.status, 429);
+  cookie = saved;
+});
+
+test('previsão de chegada parte de agora quando a rota de hoje é gerada após o horário de saída', async () => {
+  const pad = (n) => String(n).padStart(2, '0');
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const nowHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  await call('/api/settings', { method: 'PUT', body: { start_time: '00:00' } });
+  await call('/api/deliveries', { method: 'POST', body: { date: local, customer_name: 'Hoje', lat: -23.5, lng: -46.6, driver_id: bia.id } });
+  const r = await call('/api/routes/plan', { method: 'POST', body: { date: local, driver_ids: [bia.id] } });
+  assert.ok(r.data.results[0].ok, JSON.stringify(r.data));
+  const d = (await call(`/api/deliveries?date=${local}`)).data.find((x) => x.customer_name === 'Hoje');
+  // (tolerância para virada de meia-noite durante o teste)
+  assert.ok(d.eta >= nowHHMM || nowHHMM >= '23:00', `eta ${d.eta} antes de agora ${nowHHMM}`);
+  await call('/api/settings', { method: 'PUT', body: { start_time: '09:00' } });
+});

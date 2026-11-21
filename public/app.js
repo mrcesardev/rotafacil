@@ -1,6 +1,6 @@
 /* Painel do operador: cada entregador tem sua rota, saindo de onde ele está. */
 const $ = (id) => document.getElementById(id);
-const state = { me: null, drivers: [], deliveries: [], routes: [], picking: null, selected: new Set() };
+const state = { me: null, drivers: [], deliveries: [], routes: [], picking: null, selected: new Set(), openLink: null };
 let map;
 let layers;
 
@@ -232,6 +232,64 @@ $('drivers').addEventListener('click', async (e) => {
   }
 });
 
+// ---------- link para o cliente ----------
+const customerLink = (token) => `${location.origin}/r/${token}`;
+
+function shareBox(d, token) {
+  const link = customerLink(token);
+  const name = firstWord(d.customer_name);
+  const msg = encodeURIComponent(
+    `Olá${name ? ` ${name}` : ''}! Aqui é da ${state.me.name}. Para receber sua encomenda, marque no mapa onde você quer receber: ${link}\n`
+    + 'Pelo mesmo link você acompanha a entrega. 😉',
+  );
+  const wa = d.phone ? `https://wa.me/${waPhone(d.phone)}?text=${msg}` : `https://wa.me/?text=${msg}`;
+  return `
+    <div class="link-box">
+      <div class="muted" style="overflow-wrap:anywhere">${esc(link)}</div>
+      <div class="row" style="margin-top:.4rem">
+        <a href="${wa}" target="_blank" rel="noopener"><button type="button" class="small primary" style="width:100%">Enviar no WhatsApp</button></a>
+        <button type="button" class="small" data-copy="${esc(link)}">Copiar link</button>
+      </div>
+    </div>`;
+}
+const firstWord = (s) => String(s || '').trim().split(/\s+/)[0];
+
+async function getLink(id) {
+  const r = await api(`/api/deliveries/${id}/link`, { method: 'POST' });
+  return r.token;
+}
+
+$('linkForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('linkName').value.trim();
+  if (!name) return toast('Informe o nome do cliente ou o número do pedido.');
+  try {
+    const { delivery } = await api('/api/deliveries', {
+      method: 'POST',
+      body: { date: $('date').value, customer_name: name, phone: $('linkPhone').value, driver_id: $('linkDriver').value || null },
+    });
+    const token = await getLink(delivery.id);
+    $('linkResult').innerHTML = `<p class="muted" style="margin:.6rem 0 0">Link criado para <b>${esc(name)}</b>:</p>${shareBox(delivery, token)}`;
+    $('linkName').value = '';
+    $('linkPhone').value = '';
+    await refresh();
+  } catch (err) { toast(err.message); }
+});
+
+document.addEventListener('click', async (e) => {
+  const link = e.target.closest('[data-copy]')?.dataset.copy;
+  if (!link || e.target.closest('#routes')) return;
+  await navigator.clipboard.writeText(link).catch(() => {});
+  toast('Link copiado.');
+});
+
+// confirmações dos clientes aparecem sem recarregar a página
+setInterval(() => {
+  if (!state.me || document.visibilityState !== 'visible' || state.picking) return;
+  if (document.activeElement?.closest('#deliveries, #drivers')) return;
+  refresh().catch(() => {});
+}, 30000);
+
 // ---------- entregas ----------
 $('bulkAdd').addEventListener('click', async () => {
   const text = $('bulkText').value.trim();
@@ -255,6 +313,12 @@ $('bulkAdd').addEventListener('click', async () => {
   }
 });
 
+function customerChip(d) {
+  if (d.customer_confirmed_at) return ' <span class="chip ok" title="O cliente marcou o local no mapa">✅ confirmado pelo cliente</span>';
+  if (d.public_token && d.status === 'pendente') return ' <span class="chip wait" title="Link enviado; o cliente ainda não marcou o local">⏳ aguardando cliente</span>';
+  return '';
+}
+
 function renderDeliveries() {
   const ds = state.deliveries;
   const pending = ds.filter((d) => d.status === 'pendente');
@@ -277,12 +341,15 @@ function renderDeliveries() {
         : '<span style="width:13px"></span>'}
       <span class="badge" style="background:${color}">${d.stop_order || '•'}</span>
       <div class="grow">
-        <div class="title">${esc(d.customer_name || 'Sem nome')}${d.eta && d.status === 'pendente' ? ` <span class="muted">≈ ${esc(d.eta)}</span>` : ''}</div>
+        <div class="title">${esc(d.customer_name || 'Sem nome')}${d.eta && d.status === 'pendente' ? ` <span class="muted">≈ ${esc(d.eta)}</span>` : ''}${customerChip(d)}</div>
         <div class="muted">${where}${statusTxt}</div>
+        ${d.reference ? `<div class="muted">📝 ${esc(d.reference)}</div>` : ''}
+        ${state.openLink?.id === d.id ? shareBox(d, state.openLink.token) : ''}
         ${d.status === 'pendente'
           ? `<select data-assign="${d.id}" style="margin-top:.3rem;padding:.2rem .4rem" aria-label="Entregador">${options(d.driver_id)}</select>`
           : `<div class="muted">${esc(driverById(d.driver_id)?.name || '')}</div>`}
       </div>
+      <button class="small" data-link="${d.id}" title="Link para o cliente marcar o local e acompanhar">🔗</button>
       <button class="small" data-locate="${d.id}" title="Marcar/ajustar no mapa">📍</button>
       <button class="small" data-edit="${d.id}" title="Editar">✏️</button>
       <button class="small danger" data-del="${d.id}" title="Excluir">✕</button>
@@ -323,8 +390,12 @@ $('deliveries').addEventListener('change', async (e) => {
 $('deliveries').addEventListener('click', async (e) => {
   const t = e.target.closest('button');
   if (!t) return;
-  const d = state.deliveries.find((x) => String(x.id) === (t.dataset.locate || t.dataset.edit || t.dataset.del));
+  const d = state.deliveries.find((x) => String(x.id) === (t.dataset.locate || t.dataset.edit || t.dataset.del || t.dataset.link));
   if (!d) return;
+  if (t.dataset.link) {
+    state.openLink = state.openLink?.id === d.id ? null : { id: d.id, token: await getLink(d.id) };
+    return renderDeliveries();
+  }
   if (t.dataset.del && confirm(`Excluir a entrega de ${d.customer_name || 'cliente sem nome'}?`)) {
     await api(`/api/deliveries/${d.id}`, { method: 'DELETE' });
     return refresh();
@@ -384,7 +455,7 @@ function render(fit = false) {
     const color = d.status !== 'pendente' ? '#999' : d.driver_id ? driverColor(d.driver_id) : '#555';
     const drName = driverById(d.driver_id)?.name;
     const marker = L.marker([d.lat, d.lng], { icon: numberedIcon(d.stop_order || '•', color), draggable: d.status === 'pendente' })
-      .bindPopup(`<b>${esc(d.customer_name || 'Sem nome')}</b><br>${esc(drName ? `Entregador: ${drName}` : 'Sem entregador')}${d.notes ? `<br><i>${esc(d.notes)}</i>` : ''}${d.eta ? `<br>Chegada ≈ ${esc(d.eta)}` : ''}<br><span class="muted">Arraste para ajustar</span>`)
+      .bindPopup(`<b>${esc(d.customer_name || 'Sem nome')}</b><br>${esc(drName ? `Entregador: ${drName}` : 'Sem entregador')}${d.reference ? `<br>📝 ${esc(d.reference)}` : ''}${d.notes ? `<br><i>${esc(d.notes)}</i>` : ''}${d.eta ? `<br>Chegada ≈ ${esc(d.eta)}` : ''}<br><span class="muted">Arraste para ajustar</span>`)
       .addTo(layers);
     marker.on('dragend', async () => {
       const p = marker.getLatLng();

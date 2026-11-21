@@ -80,6 +80,22 @@
       </section>
 
       <section>
+        <h2>Pedir localização ao cliente</h2>
+        <p class="muted">Gera um link para o cliente marcar no mapa onde quer receber. Pelo mesmo link ele acompanha a entrega.</p>
+        <form id="linkForm" novalidate>
+          <div class="row">
+            <input id="linkName" placeholder="Nome do cliente ou nº do pedido" required>
+            <input id="linkPhone" type="tel" placeholder="WhatsApp do cliente">
+          </div>
+          <div class="row" style="margin-top:.5rem">
+            <select id="linkDriver" class="driver-select" aria-label="Entregador"></select>
+            <button class="primary shrink">Criar link</button>
+          </div>
+        </form>
+        <div id="linkResult"></div>
+      </section>
+
+      <section>
         <h2>Adicionar entregas</h2>
         <p class="muted">Cole as localizações recebidas no WhatsApp: uma por linha. O texto antes do link vira o nome do cliente. Ex.: <code>Maria - https://maps.app.goo.gl/...</code></p>
         <textarea id="bulkText" placeholder="João - https://maps.google.com/?q=-23.56,-46.65&#10;Ana -23.5489, -46.6388&#10;Pedro - Rua Augusta, 1500, São Paulo"></textarea>

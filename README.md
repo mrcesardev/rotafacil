@@ -31,6 +31,29 @@ O operador decide **quais entregas vão com cada entregador**. O sistema calcula
 7. **No meio do dia**, o entregador toca em **"Recalcular a partir de onde estou"**. O celular manda a posição
    do GPS e as paradas pendentes são reordenadas a partir dali. As já feitas mantêm a numeração.
 
+## Link do destinatário (o cliente marca onde quer receber)
+
+Em vez de pedir a localização pelo WhatsApp, o operador pode mandar um **link único da entrega**:
+
+1. No painel, em **"Pedir localização ao cliente"**, informe o nome (ou nº do pedido) e o WhatsApp do cliente
+   e clique em **Criar link**. Para uma entrega que já existe, use o botão 🔗 na lista.
+2. Clique em **Enviar no WhatsApp**. A mensagem já vai pronta com o link.
+3. O cliente abre no celular e marca o local:
+   - botão **"Usar minha localização atual"** (GPS), busca por endereço, ou toque no mapa;
+   - arrasta o pino até a entrada certa;
+   - escreve a referência ("apto 32, portão azul") e aceita o uso dos dados (LGPD).
+4. No painel, a entrega passa de **⏳ aguardando cliente** para **✅ confirmado pelo cliente** sozinha
+   (atualiza a cada 30 s). A referência aparece também para o entregador.
+5. **Pelo mesmo link, o cliente acompanha a entrega:**
+   - quando a rota é gerada: *"Saiu para entrega com Carlos · faltam 2 entregas antes da sua · previsão ≈ 14:20"*;
+   - depois: *"Entregue às 14:23"*, ou *"Não conseguimos entregar"*.
+
+Regras de segurança:
+- o link só existe se o operador criou a entrega, e o token é aleatório (não dá para adivinhar);
+- o cliente não vê observações internas nem as outras paradas da rota;
+- depois que a encomenda sai para entrega, o cliente não consegue mais mudar o local;
+- há limite de tentativas por IP.
+
 ## Rodando localmente (modo simples)
 
 Requer Node.js 22.13+.
@@ -64,7 +87,9 @@ de cerca de 16 GB durante a preparação. Atualize o mapa de tempos em tempos ro
   `TILE_URL` com um provedor (MapTiler, Stadia, Protomaps…) ou hospede os seus.
 - **Geocodificação de endereços:** o Nominatim público limita a 1 requisição/s. Para volume, hospede
   o seu e configure `NOMINATIM_URL`. Localizações fixas e links não usam geocodificação.
-- Use HTTPS (`NODE_ENV=production` liga o cookie `Secure`).
+- Use HTTPS (`NODE_ENV=production` liga o cookie `Secure`). Sem HTTPS, o botão de GPS (entregador e cliente) não funciona.
+- Atrás de proxy reverso (Caddy/Nginx), defina `TRUST_PROXY=1` para o limite por IP usar o IP real do cliente.
+- **Satélite (opcional):** com `SATELLITE_TILE_URL`, os mapas ganham a opção "Satélite". Ela ajuda o cliente a achar a própria casa.
 
 ## WhatsApp automático (API oficial da Meta)
 
@@ -86,10 +111,11 @@ src/
   db.js                SQLite (node:sqlite, sem dependência nativa)
   auth.js              contas de operador e sessões
   location.js          leitura de links/coordenadas/endereços do WhatsApp
+  recipient.js         área pública do destinatário (marcar local e acompanhar)
   routing/matrix.js    matriz de tempos/distâncias (OSRM ou estimativa)
   routing/heuristic.js otimizador embutido da ordem das paradas (inserção + 2-opt/or-opt)
   routing/optimizer.js escolhe VROOM ou embutido, calcula horários
-public/                painel do operador e página do entregador (Leaflet)
+public/                painel do operador, página do entregador e do destinatário (Leaflet)
 test/                  testes (node --test)
 ```
 

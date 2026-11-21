@@ -77,22 +77,27 @@ async function resolveShortLink(url, { fetchImpl = fetch, maxHops = 5 } = {}) {
 }
 
 let lastNominatimCall = 0;
-async function geocode(address, { fetchImpl = fetch } = {}) {
+/** Busca endereços no Nominatim (OpenStreetMap). Devolve até `limit` resultados. */
+async function searchAddress(address, { fetchImpl = fetch, limit = 1 } = {}) {
   const base = process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
-  if (process.env.GEOCODING === 'off') return null;
+  if (process.env.GEOCODING === 'off') return [];
   // política do Nominatim público: no máximo 1 requisição por segundo
   const wait = lastNominatimCall + 1100 - Date.now();
+  lastNominatimCall = Math.max(Date.now(), lastNominatimCall + 1100);
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastNominatimCall = Date.now();
-  const params = new URLSearchParams({ q: address, format: 'jsonv2', limit: '1', countrycodes: process.env.GEOCODE_COUNTRY || 'br' });
+  const params = new URLSearchParams({ q: address, format: 'jsonv2', limit: String(limit), countrycodes: process.env.GEOCODE_COUNTRY || 'br' });
   const res = await fetchImpl(`${base}/search?${params}`, {
     headers: { 'User-Agent': 'RotaFacil/0.1 (roteirizador de entregas)', 'Accept-Language': 'pt-BR' },
     signal: AbortSignal.timeout(10000),
   });
-  if (!res.ok) return null;
-  const [hit] = await res.json();
-  if (!hit) return null;
-  return { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon), address: hit.display_name };
+  if (!res.ok) return [];
+  const hits = await res.json();
+  return hits.map((h) => ({ lat: parseFloat(h.lat), lng: parseFloat(h.lon), address: h.display_name }));
+}
+
+async function geocode(address, opts = {}) {
+  const [hit] = await searchAddress(address, { ...opts, limit: 1 });
+  return hit || null;
 }
 
 /**
@@ -170,4 +175,4 @@ function splitBulk(text) {
   return items;
 }
 
-module.exports = { extractCoords, resolveLocation, resolveShortLink, geocode, splitBulk };
+module.exports = { extractCoords, resolveLocation, resolveShortLink, geocode, searchAddress, splitBulk };

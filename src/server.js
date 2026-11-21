@@ -7,6 +7,7 @@ const auth = require('./auth');
 const { resolveLocation, splitBulk } = require('./location');
 const { planRoute } = require('./routing/optimizer');
 const { routeGeometry } = require('./routing/matrix');
+const recipient = require('./recipient');
 
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
@@ -27,6 +28,8 @@ function addSeconds(hhmm, seconds) {
 function createApp({ db = open() } = {}) {
   const app = express();
   app.disable('x-powered-by');
+  // atrás de proxy reverso (Caddy/Nginx), para o limite por IP usar o IP real do cliente
+  if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
   const requireAuth = auth.requireAuth(db);
   const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -74,6 +77,7 @@ function createApp({ db = open() } = {}) {
   }));
 
   app.use(express.json({ limit: '1mb' }));
+  recipient.register(app, db, { wrap });
 
   // ---------- Autenticação ----------
   const sendSession = (res, operatorId) => {
@@ -268,6 +272,18 @@ function createApp({ db = open() } = {}) {
     res.json(db.prepare('SELECT * FROM deliveries WHERE id = ?').get(d.id));
   });
 
+  // gera (ou devolve) o link único para o cliente marcar o local e acompanhar a entrega
+  app.post('/api/deliveries/:id/link', requireAuth, (req, res) => {
+    const d = db.prepare('SELECT id, public_token FROM deliveries WHERE id = ? AND operator_id = ?').get(req.params.id, req.operator.id);
+    if (!d) return res.status(404).json({ error: 'Entrega não encontrada.' });
+    let token = d.public_token;
+    if (!token) {
+      token = auth.randomToken(16);
+      db.prepare('UPDATE deliveries SET public_token = ? WHERE id = ?').run(token, d.id);
+    }
+    res.json({ token, path: `/r/${token}` });
+  });
+
   app.delete('/api/deliveries/:id', requireAuth, (req, res) => {
     db.prepare('DELETE FROM deliveries WHERE id = ? AND operator_id = ?').run(req.params.id, req.operator.id);
     res.json({ ok: true });
@@ -323,7 +339,9 @@ function createApp({ db = open() } = {}) {
       // paradas já concluídas mantêm a numeração; as pendentes continuam a contagem
       const done = db.prepare(`SELECT COALESCE(MAX(stop_order), 0) AS m FROM deliveries WHERE route_id = ? AND status != 'pendente'`).get(route.id).m;
       const upd = db.prepare('UPDATE deliveries SET route_id = ?, stop_order = ?, eta = ? WHERE id = ?');
-      const base = clock || op.start_time;
+      // rota de hoje gerada depois do horário de saída: a previsão parte de agora
+      const now = nowHHMM();
+      const base = clock || (date === today() && now > op.start_time ? now : op.start_time);
       result.stopIds.forEach((id, i) => upd.run(route.id, done + i + 1, addSeconds(base, result.arrivals[i]), id));
       db.exec('COMMIT');
     } catch (e) {
@@ -383,7 +401,7 @@ function createApp({ db = open() } = {}) {
     const r = routeByToken(req.params.token);
     if (!r) return res.status(404).json({ error: 'Rota não encontrada.' });
     const stops = db.prepare(
-      `SELECT id, customer_name, phone, address, notes, lat, lng, status, stop_order, eta
+      `SELECT id, customer_name, phone, address, notes, reference, lat, lng, status, stop_order, eta
        FROM deliveries WHERE route_id = ? ORDER BY stop_order`,
     ).all(r.id);
     res.json({
@@ -431,6 +449,8 @@ function createApp({ db = open() } = {}) {
     res.json({
       tileUrl: process.env.TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       tileAttribution: process.env.TILE_ATTRIBUTION || '&copy; colaboradores do OpenStreetMap',
+      satelliteUrl: process.env.SATELLITE_TILE_URL || null,
+      satelliteAttribution: process.env.SATELLITE_ATTRIBUTION || '',
       osrm: !!process.env.OSRM_URL,
       vroom: !!process.env.VROOM_URL,
     });
@@ -443,6 +463,7 @@ function createApp({ db = open() } = {}) {
   app.use(express.static(pub, { extensions: ['html'] }));
   app.use('/vendor/leaflet', express.static(path.dirname(require.resolve('leaflet/dist/leaflet.js')), { maxAge: '7d' }));
   app.get('/e/:token', (req, res) => res.sendFile(path.join(pub, 'driver.html')));
+  app.get('/r/:token', (req, res) => res.sendFile(path.join(pub, 'recipient.html')));
 
   app.use((err, req, res, _next) => {
     if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });

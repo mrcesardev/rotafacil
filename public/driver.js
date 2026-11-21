@@ -50,6 +50,7 @@ async function load(fit = false) {
         <div>
           <div class="title">${esc(s.customer_name || 'Cliente')} ${label ? `<span class="muted">${label}</span>` : ''}</div>
           <div class="muted">${[s.eta ? `Previsão ≈ ${esc(s.eta)}` : '', esc(s.address || '')].filter(Boolean).join(' · ')}</div>
+          ${s.reference ? `<div>📝 ${esc(s.reference)}</div>` : ''}
           ${s.notes ? `<div class="muted"><i>${esc(s.notes)}</i></div>` : ''}
         </div>
       </div>
