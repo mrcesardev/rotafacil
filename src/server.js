@@ -5,12 +5,18 @@ const express = require('express');
 const { open } = require('./db');
 const auth = require('./auth');
 const { resolveLocation, splitBulk } = require('./location');
-const { plan } = require('./routing/optimizer');
+const { planRoute } = require('./routing/optimizer');
 const { routeGeometry } = require('./routing/matrix');
 
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 const clean = (v, max = 500) => (v == null ? null : String(v).trim().slice(0, max) || null);
+
+const nowHHMM = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+const validCoord = (lat, lng) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
 function addSeconds(hhmm, seconds) {
   const [h, m] = String(hhmm || '08:00').split(':').map(Number);
@@ -147,23 +153,29 @@ function createApp({ db = open() } = {}) {
   app.post('/api/drivers', requireAuth, (req, res) => {
     const name = clean(req.body.name, 120);
     if (!name) return res.status(400).json({ error: 'Informe o nome do entregador.' });
-    const max = parseInt(req.body.max_stops, 10);
-    const r = db.prepare('INSERT INTO drivers (operator_id, name, phone, max_stops) VALUES (?, ?, ?, ?)')
-      .run(req.operator.id, name, clean(req.body.phone, 30), max > 0 ? max : null);
+    const r = db.prepare('INSERT INTO drivers (operator_id, name, phone) VALUES (?, ?, ?)')
+      .run(req.operator.id, name, clean(req.body.phone, 30));
     res.status(201).json(db.prepare('SELECT * FROM drivers WHERE id = ?').get(r.lastInsertRowid));
   });
   app.put('/api/drivers/:id', requireAuth, (req, res) => {
     const d = db.prepare('SELECT * FROM drivers WHERE id = ? AND operator_id = ?').get(req.params.id, req.operator.id);
     if (!d) return res.status(404).json({ error: 'Entregador não encontrado.' });
     const b = req.body;
-    const max = b.max_stops === undefined ? d.max_stops : parseInt(b.max_stops, 10) > 0 ? parseInt(b.max_stops, 10) : null;
-    db.prepare('UPDATE drivers SET name = ?, phone = ?, max_stops = ?, active = ? WHERE id = ?').run(
+    db.prepare('UPDATE drivers SET name = ?, phone = ?, active = ? WHERE id = ?').run(
       b.name === undefined ? d.name : clean(b.name, 120) || d.name,
       b.phone === undefined ? d.phone : clean(b.phone, 30),
-      max,
       b.active === undefined ? d.active : (b.active ? 1 : 0),
       d.id,
     );
+    // ponto de partida: onde o entregador está agora (null limpa e volta a usar a base)
+    if (b.start_lat !== undefined || b.start_lng !== undefined) {
+      const lat = b.start_lat == null || b.start_lat === '' ? null : Number(b.start_lat);
+      const lng = b.start_lng == null || b.start_lng === '' ? null : Number(b.start_lng);
+      if ((lat == null) !== (lng == null) || (lat != null && !validCoord(lat, lng))) {
+        return res.status(400).json({ error: 'Ponto de partida inválido.' });
+      }
+      setDriverStart(d.id, lat, lng, lat == null ? null : clean(b.start_address));
+    }
     res.json(db.prepare('SELECT * FROM drivers WHERE id = ?').get(d.id));
   });
   app.delete('/api/drivers/:id', requireAuth, (req, res) => {
@@ -172,23 +184,31 @@ function createApp({ db = open() } = {}) {
   });
 
   // ---------- Entregas ----------
+  const ownDriver = (opId, driverId) => {
+    if (driverId == null || driverId === '') return null;
+    const d = db.prepare('SELECT id FROM drivers WHERE id = ? AND operator_id = ?').get(Number(driverId), opId);
+    if (!d) { const e = new Error('Entregador não encontrado.'); e.status = 400; throw e; }
+    return d.id;
+  };
+
   const insertDelivery = (opId, date, f) => db.prepare(
-    `INSERT INTO deliveries (operator_id, date, customer_name, phone, address, notes, lat, lng, raw_input, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO deliveries (operator_id, date, customer_name, phone, address, notes, lat, lng, raw_input, source, driver_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(opId, date, clean(f.customer_name, 120), clean(f.phone, 30), clean(f.address), clean(f.notes),
-    f.lat ?? null, f.lng ?? null, clean(f.raw_input, 2000), f.source || 'manual');
+    f.lat ?? null, f.lng ?? null, clean(f.raw_input, 2000), f.source || 'manual', f.driver_id ?? null);
 
   app.get('/api/deliveries', requireAuth, (req, res) => {
     const date = isDate(req.query.date) ? req.query.date : today();
     res.json(db.prepare(
-      `SELECT d.*, r.driver_id FROM deliveries d LEFT JOIN routes r ON r.id = d.route_id
-       WHERE d.operator_id = ? AND d.date = ? ORDER BY d.route_id IS NULL, d.route_id, d.stop_order, d.id`,
+      `SELECT * FROM deliveries WHERE operator_id = ? AND date = ?
+       ORDER BY driver_id IS NULL, driver_id, stop_order IS NULL, stop_order, id`,
     ).all(req.operator.id, date));
   });
 
   app.post('/api/deliveries', requireAuth, wrap(async (req, res) => {
     const b = req.body;
     const date = isDate(b.date) ? b.date : today();
+    const driverId = ownDriver(req.operator.id, b.driver_id);
     let lat = b.lat != null && b.lat !== '' ? Number(b.lat) : null;
     let lng = b.lng != null && b.lng !== '' ? Number(b.lng) : null;
     let address = b.address;
@@ -198,23 +218,37 @@ function createApp({ db = open() } = {}) {
       if (r.error) warning = r.error;
       else { lat = r.lat; lng = r.lng; address = address || r.address; }
     }
-    const r = insertDelivery(req.operator.id, date, { ...b, lat, lng, address, raw_input: b.input });
+    const r = insertDelivery(req.operator.id, date, { ...b, lat, lng, address, raw_input: b.input, driver_id: driverId });
     res.status(201).json({ delivery: db.prepare('SELECT * FROM deliveries WHERE id = ?').get(r.lastInsertRowid), warning });
   }));
 
   app.post('/api/deliveries/bulk', requireAuth, wrap(async (req, res) => {
     const date = isDate(req.body.date) ? req.body.date : today();
+    const driverId = ownDriver(req.operator.id, req.body.driver_id);
     const items = splitBulk(req.body.text).slice(0, 300);
     const results = [];
     for (const it of items) {
       const loc = await resolveLocation(it.input);
       const r = insertDelivery(req.operator.id, date, {
-        customer_name: it.name, lat: loc.lat, lng: loc.lng, address: loc.address, raw_input: it.input, source: 'colado',
+        customer_name: it.name, lat: loc.lat, lng: loc.lng, address: loc.address, raw_input: it.input, source: 'colado', driver_id: driverId,
       });
       results.push({ id: Number(r.lastInsertRowid), name: it.name, ok: !loc.error, error: loc.error });
     }
     res.json({ results });
   }));
+
+  // atribui várias entregas a um entregador (driver_id null = tirar do entregador)
+  app.post('/api/deliveries/assign', requireAuth, (req, res) => {
+    const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger);
+    const driverId = ownDriver(req.operator.id, req.body.driver_id);
+    const upd = db.prepare(
+      `UPDATE deliveries SET driver_id = ?, route_id = NULL, stop_order = NULL, eta = NULL
+       WHERE id = ? AND operator_id = ? AND status = 'pendente' AND driver_id IS NOT ?`,
+    );
+    let changed = 0;
+    for (const id of ids) changed += Number(upd.run(driverId, id, req.operator.id, driverId).changes);
+    res.json({ changed });
+  });
 
   app.put('/api/deliveries/:id', requireAuth, (req, res) => {
     const d = db.prepare('SELECT * FROM deliveries WHERE id = ? AND operator_id = ?').get(req.params.id, req.operator.id);
@@ -223,10 +257,14 @@ function createApp({ db = open() } = {}) {
     const pick = (k, max) => (b[k] === undefined ? d[k] : clean(b[k], max));
     const coord = (k) => (b[k] === undefined ? d[k] : b[k] === null || b[k] === '' ? null : Number(b[k]));
     const status = b.status === undefined ? d.status : ['pendente', 'entregue', 'falhou'].includes(b.status) ? b.status : d.status;
+    const driverId = b.driver_id === undefined ? d.driver_id : ownDriver(req.operator.id, b.driver_id);
+    const moved = driverId !== d.driver_id;
     db.prepare(`UPDATE deliveries SET customer_name = ?, phone = ?, address = ?, notes = ?, lat = ?, lng = ?, status = ?,
-                delivered_at = CASE WHEN ? = 'pendente' THEN NULL WHEN ? != status THEN datetime('now') ELSE delivered_at END
+                delivered_at = CASE WHEN ? = 'pendente' THEN NULL WHEN ? != status THEN datetime('now') ELSE delivered_at END,
+                driver_id = ?, route_id = ?, stop_order = ?, eta = ?
                 WHERE id = ?`)
-      .run(pick('customer_name', 120), pick('phone', 30), pick('address'), pick('notes'), coord('lat'), coord('lng'), status, status, status, d.id);
+      .run(pick('customer_name', 120), pick('phone', 30), pick('address'), pick('notes'), coord('lat'), coord('lng'), status, status, status,
+        driverId, moved ? null : d.route_id, moved ? null : d.stop_order, moved ? null : d.eta, d.id);
     res.json(db.prepare('SELECT * FROM deliveries WHERE id = ?').get(d.id));
   });
 
@@ -235,64 +273,89 @@ function createApp({ db = open() } = {}) {
     res.json({ ok: true });
   });
 
-  // ---------- Rotas ----------
-  app.post('/api/routes/plan', requireAuth, wrap(async (req, res) => {
-    const op = req.operator;
-    const date = isDate(req.body.date) ? req.body.date : today();
-    if (op.depot_lat == null || op.depot_lng == null) {
-      return res.status(400).json({ error: 'Defina o ponto de partida (base) nas configurações antes de gerar as rotas.' });
-    }
-    const ids = Array.isArray(req.body.driver_ids) ? req.body.driver_ids.map(Number) : null;
-    const drivers = db.prepare('SELECT * FROM drivers WHERE operator_id = ? AND active = 1 ORDER BY id').all(op.id)
-      .filter((d) => !ids || ids.includes(d.id));
+  // ---------- Rotas (uma por entregador, saindo de onde ele está) ----------
+  function setDriverStart(driverId, lat, lng, address) {
+    db.prepare(`UPDATE drivers SET start_lat = ?, start_lng = ?, start_address = ?,
+                start_updated_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now') END WHERE id = ?`)
+      .run(lat, lng, address, lat, driverId);
+  }
+
+  /**
+   * Otimiza a rota de um entregador com as entregas pendentes atribuídas a ele.
+   * Mantém o mesmo link (token) se a rota já existia, para o entregador não perder o acesso.
+   */
+  async function planDriverRoute(op, driver, date, { clock } = {}) {
+    const start = driver.start_lat != null
+      ? { lat: driver.start_lat, lng: driver.start_lng }
+      : op.depot_lat != null ? { lat: op.depot_lat, lng: op.depot_lng } : null;
+    if (!start) throw new Error(`Defina onde ${driver.name} está (ponto de partida) ou uma base padrão.`);
+
     const stops = db.prepare(
-      `SELECT id, lat, lng FROM deliveries WHERE operator_id = ? AND date = ? AND status = 'pendente'
-       AND lat IS NOT NULL AND lng IS NOT NULL ORDER BY id`,
-    ).all(op.id, date);
+      `SELECT id, lat, lng FROM deliveries WHERE operator_id = ? AND date = ? AND driver_id = ?
+       AND status = 'pendente' AND lat IS NOT NULL AND lng IS NOT NULL ORDER BY id`,
+    ).all(op.id, date, driver.id);
+    const result = await planRoute({
+      start, stops, returnToStart: !!op.return_to_depot, serviceSeconds: (op.service_minutes || 0) * 60,
+    });
 
-    let result;
-    try {
-      result = await plan({
-        depot: { lat: op.depot_lat, lng: op.depot_lng },
-        stops,
-        drivers,
-        balance: req.body.balance !== false,
-        returnToDepot: !!op.return_to_depot,
-        serviceSeconds: (op.service_minutes || 0) * 60,
-      });
-    } catch (e) {
-      return res.status(400).json({ error: e.message });
-    }
-
-    const coordsById = new Map(stops.map((s) => [s.id, s]));
-    const depot = { lat: op.depot_lat, lng: op.depot_lng };
-    const geometries = await Promise.all(result.routes.map((r) => {
-      if (!r.stopIds.length) return null;
-      const pts = [depot, ...r.stopIds.map((id) => coordsById.get(id))];
-      if (op.return_to_depot) pts.push(depot);
-      return routeGeometry(pts);
-    }));
+    const byId = new Map(stops.map((s) => [s.id, s]));
+    const pts = [start, ...result.stopIds.map((id) => byId.get(id))];
+    if (op.return_to_depot) pts.push(start);
+    const geometry = await routeGeometry(pts);
 
     db.exec('BEGIN');
     try {
+      let route = db.prepare('SELECT * FROM routes WHERE driver_id = ? AND date = ?').get(driver.id, date);
+      const engine = `${result.engine}/${result.matrixSource}`;
+      if (route) {
+        db.prepare(`UPDATE routes SET distance_m = ?, duration_s = ?, geometry = ?, engine = ?, start_lat = ?, start_lng = ?,
+                    created_at = datetime('now') WHERE id = ?`)
+          .run(result.distance_m, result.duration_s, JSON.stringify(geometry), engine, start.lat, start.lng, route.id);
+      } else {
+        const ins = db.prepare(`INSERT INTO routes (operator_id, driver_id, date, token, distance_m, duration_s, geometry, engine, start_lat, start_lng)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(op.id, driver.id, date, auth.randomToken(12), result.distance_m, result.duration_s, JSON.stringify(geometry), engine, start.lat, start.lng);
+        route = { id: Number(ins.lastInsertRowid) };
+      }
+      // entregas que saíram deste entregador deixam a rota
       db.prepare(`UPDATE deliveries SET route_id = NULL, stop_order = NULL, eta = NULL
-                  WHERE operator_id = ? AND date = ? AND status = 'pendente'`).run(op.id, date);
-      db.prepare('DELETE FROM routes WHERE operator_id = ? AND date = ?').run(op.id, date);
-      const insRoute = db.prepare(`INSERT INTO routes (operator_id, driver_id, date, token, distance_m, duration_s, geometry, engine)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-      const updStop = db.prepare('UPDATE deliveries SET route_id = ?, stop_order = ?, eta = ? WHERE id = ?');
-      result.routes.forEach((r, k) => {
-        if (!r.stopIds.length) return;
-        const ins = insRoute.run(op.id, r.driverId, date, auth.randomToken(12), r.distance_m, r.duration_s,
-          JSON.stringify(geometries[k]), `${result.engine}/${result.matrixSource}`);
-        r.stopIds.forEach((id, i) => updStop.run(ins.lastInsertRowid, i + 1, addSeconds(op.start_time, r.arrivals[i]), id));
-      });
+                  WHERE route_id = ? AND status = 'pendente'`).run(route.id);
+      // paradas já concluídas mantêm a numeração; as pendentes continuam a contagem
+      const done = db.prepare(`SELECT COALESCE(MAX(stop_order), 0) AS m FROM deliveries WHERE route_id = ? AND status != 'pendente'`).get(route.id).m;
+      const upd = db.prepare('UPDATE deliveries SET route_id = ?, stop_order = ?, eta = ? WHERE id = ?');
+      const base = clock || op.start_time;
+      result.stopIds.forEach((id, i) => upd.run(route.id, done + i + 1, addSeconds(base, result.arrivals[i]), id));
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
       throw e;
     }
-    res.json({ engine: result.engine, matrixSource: result.matrixSource, unassigned: result.unassigned, routes: listRoutes(op.id, date) });
+    return result;
+  }
+
+  // Gera a rota de um entregador (driver_ids: [id]) ou de todos que têm entregas atribuídas.
+  app.post('/api/routes/plan', requireAuth, wrap(async (req, res) => {
+    const op = req.operator;
+    const date = isDate(req.body.date) ? req.body.date : today();
+    const ids = Array.isArray(req.body.driver_ids) ? req.body.driver_ids.map(Number) : null;
+    const drivers = db.prepare(
+      `SELECT dr.* FROM drivers dr WHERE dr.operator_id = ? AND EXISTS (
+         SELECT 1 FROM deliveries d WHERE d.driver_id = dr.id AND d.date = ? AND d.status = 'pendente')
+       ORDER BY dr.name`,
+    ).all(op.id, date).filter((d) => !ids || ids.includes(d.id));
+    if (!drivers.length) {
+      return res.status(400).json({ error: 'Nenhum entregador com entregas pendentes atribuídas nesta data.' });
+    }
+    const results = [];
+    for (const driver of drivers) {
+      try {
+        const r = await planDriverRoute(op, driver, date);
+        results.push({ driver_id: driver.id, name: driver.name, ok: true, engine: r.engine, matrixSource: r.matrixSource });
+      } catch (e) {
+        results.push({ driver_id: driver.id, name: driver.name, ok: false, error: e.message });
+      }
+    }
+    res.json({ results, routes: listRoutes(op.id, date) });
   }));
 
   function listRoutes(operatorId, date) {
@@ -301,7 +364,7 @@ function createApp({ db = open() } = {}) {
               (SELECT COUNT(*) FROM deliveries d WHERE d.route_id = r.id) AS stops,
               (SELECT COUNT(*) FROM deliveries d WHERE d.route_id = r.id AND d.status != 'pendente') AS done
        FROM routes r LEFT JOIN drivers dr ON dr.id = r.driver_id
-       WHERE r.operator_id = ? AND r.date = ? ORDER BY r.id`,
+       WHERE r.operator_id = ? AND r.date = ? ORDER BY dr.name`,
     ).all(operatorId, date).map((r) => ({ ...r, geometry: r.geometry ? JSON.parse(r.geometry) : null }));
   }
 
@@ -310,24 +373,44 @@ function createApp({ db = open() } = {}) {
   });
 
   // ---------- Página do entregador (acesso por link, sem login) ----------
+  const routeByToken = (token) => db.prepare(
+    `SELECT r.*, dr.name AS driver_name, o.name AS operator_name
+     FROM routes r LEFT JOIN drivers dr ON dr.id = r.driver_id JOIN operators o ON o.id = r.operator_id
+     WHERE r.token = ?`,
+  ).get(token);
+
   app.get('/api/driver/:token', (req, res) => {
-    const r = db.prepare(
-      `SELECT r.*, dr.name AS driver_name, o.name AS operator_name, o.depot_lat, o.depot_lng, o.depot_address
-       FROM routes r LEFT JOIN drivers dr ON dr.id = r.driver_id JOIN operators o ON o.id = r.operator_id
-       WHERE r.token = ?`,
-    ).get(req.params.token);
-    if (!r) return res.status(404).json({ error: 'Rota não encontrada ou substituída por um novo planejamento.' });
+    const r = routeByToken(req.params.token);
+    if (!r) return res.status(404).json({ error: 'Rota não encontrada.' });
     const stops = db.prepare(
       `SELECT id, customer_name, phone, address, notes, lat, lng, status, stop_order, eta
        FROM deliveries WHERE route_id = ? ORDER BY stop_order`,
     ).all(r.id);
     res.json({
       date: r.date, driver_name: r.driver_name, operator_name: r.operator_name,
-      depot: { lat: r.depot_lat, lng: r.depot_lng, address: r.depot_address },
+      start: { lat: r.start_lat, lng: r.start_lng },
       distance_m: r.distance_m, duration_s: r.duration_s,
       geometry: r.geometry ? JSON.parse(r.geometry) : null, stops,
     });
   });
+
+  // o entregador manda a posição atual (GPS do celular) e a rota é recalculada a partir dali
+  app.post('/api/driver/:token/start', wrap(async (req, res) => {
+    const r = routeByToken(req.params.token);
+    if (!r || !r.driver_id) return res.status(404).json({ error: 'Rota não encontrada.' });
+    const lat = Number(req.body.lat);
+    const lng = Number(req.body.lng);
+    if (!validCoord(lat, lng)) return res.status(400).json({ error: 'Localização inválida.' });
+    setDriverStart(r.driver_id, lat, lng, 'GPS do entregador');
+    const op = db.prepare('SELECT * FROM operators WHERE id = ?').get(r.operator_id);
+    const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(r.driver_id);
+    try {
+      await planDriverRoute(op, driver, r.date, { clock: nowHHMM() });
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    res.json({ ok: true });
+  }));
 
   app.post('/api/driver/:token/stops/:id', (req, res) => {
     const r = db.prepare('SELECT id FROM routes WHERE token = ?').get(req.params.token);
@@ -362,6 +445,7 @@ function createApp({ db = open() } = {}) {
   app.get('/e/:token', (req, res) => res.sendFile(path.join(pub, 'driver.html')));
 
   app.use((err, req, res, _next) => {
+    if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
     console.error(err);
     if (!res.headersSent) res.status(500).json({ error: 'Erro interno.' });
   });

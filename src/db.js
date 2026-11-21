@@ -20,7 +20,7 @@ function open(file = DB_PATH) {
       depot_lng REAL,
       service_minutes INTEGER NOT NULL DEFAULT 3,
       start_time TEXT NOT NULL DEFAULT '08:00',
-      return_to_depot INTEGER NOT NULL DEFAULT 1,
+      return_to_depot INTEGER NOT NULL DEFAULT 0,
       whatsapp_phone_number_id TEXT UNIQUE,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -72,7 +72,22 @@ function open(file = DB_PATH) {
     CREATE INDEX IF NOT EXISTS idx_deliveries_op_date ON deliveries(operator_id, date);
     CREATE INDEX IF NOT EXISTS idx_routes_op_date ON routes(operator_id, date);
   `);
+
+  // migrações: rotas individuais, partindo de onde cada entregador está
+  addColumn(db, 'drivers', 'start_lat', 'REAL');
+  addColumn(db, 'drivers', 'start_lng', 'REAL');
+  addColumn(db, 'drivers', 'start_address', 'TEXT');
+  addColumn(db, 'drivers', 'start_updated_at', 'TEXT');
+  addColumn(db, 'deliveries', 'driver_id', 'INTEGER REFERENCES drivers(id) ON DELETE SET NULL');
+  addColumn(db, 'routes', 'start_lat', 'REAL');
+  addColumn(db, 'routes', 'start_lng', 'REAL');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_driver_date ON routes(driver_id, date)');
   return db;
+}
+
+function addColumn(db, table, column, type) {
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
 module.exports = { open };

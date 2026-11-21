@@ -10,6 +10,7 @@ async function load(fit = false) {
   } catch (e) {
     document.getElementById('title').textContent = e.message;
     document.getElementById('map').classList.add('hidden');
+    document.getElementById('recalc').classList.add('hidden');
     return;
   }
   const done = data.stops.filter((s) => s.status !== 'pendente').length;
@@ -24,9 +25,10 @@ async function load(fit = false) {
   layer.clearLayers();
   const bounds = [];
   if (data.geometry) L.geoJSON(data.geometry, { style: { color: COLORS[0], weight: 5, opacity: 0.7 } }).addTo(layer);
-  if (data.depot.lat != null) {
-    L.marker([data.depot.lat, data.depot.lng], { icon: depotIcon() }).addTo(layer);
-    bounds.push([data.depot.lat, data.depot.lng]);
+  if (data.start.lat != null) {
+    L.marker([data.start.lat, data.start.lng], { icon: L.divIcon({ className: '', html: '<div class="depot-pin" style="background:#0f7b5f">🛵</div>', iconSize: [30, 30], iconAnchor: [15, 15] }) })
+      .bindPopup('Ponto de partida').addTo(layer);
+    bounds.push([data.start.lat, data.start.lng]);
   }
   const next = data.stops.find((s) => s.status === 'pendente');
   for (const s of data.stops) {
@@ -82,6 +84,29 @@ document.getElementById('stops').addEventListener('click', async (e) => {
     toast(err.message);
     b.disabled = false;
   }
+});
+
+document.getElementById('recalc').addEventListener('click', () => {
+  const btn = document.getElementById('recalc');
+  if (!navigator.geolocation) return toast('Este celular não permite pegar a localização.');
+  btn.disabled = true;
+  btn.textContent = 'Pegando sua localização…';
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    try {
+      await api(`/api/driver/${token}/start`, { method: 'POST', body: { lat: pos.coords.latitude, lng: pos.coords.longitude } });
+      await load(true);
+      toast('Rota recalculada a partir de onde você está.');
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📍 Recalcular a partir de onde estou';
+    }
+  }, (err) => {
+    btn.disabled = false;
+    btn.textContent = '📍 Recalcular a partir de onde estou';
+    toast(err.code === 1 ? 'Permita o acesso à localização para recalcular.' : 'Não consegui pegar sua localização.');
+  }, { enableHighAccuracy: true, timeout: 20000 });
 });
 
 load(true);

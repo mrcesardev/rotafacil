@@ -50,20 +50,19 @@
       </header>
 
       <section id="settings" class="hidden">
-        <h2>Ponto de partida e preferências</h2>
-        <p class="muted">Cole a localização da base ou clique em “Marcar no mapa”.</p>
-        <label for="depotInput">Base (link, coordenadas ou endereço)</label>
+        <h2>Preferências</h2>
+        <label for="depotInput">Base padrão (opcional): usada quando o entregador não tem ponto de partida</label>
         <div class="row">
-          <input id="depotInput" placeholder="-23.5505, -46.6333">
+          <input id="depotInput" placeholder="link, coordenadas ou endereço">
           <button type="button" class="shrink" id="depotFromInput">Usar</button>
+          <button type="button" class="shrink" id="depotPick" title="Marcar no mapa">📍</button>
         </div>
-        <button type="button" id="depotPick" style="margin-top:.5rem">📍 Marcar no mapa</button>
         <p class="muted" id="depotInfo"></p>
         <div class="row">
-          <div><label for="startTime">Saída</label><input id="startTime" type="time"></div>
+          <div><label for="startTime">Horário de saída</label><input id="startTime" type="time"></div>
           <div><label for="serviceMin">Min. por entrega</label><input id="serviceMin" type="number" min="0" max="120"></div>
         </div>
-        <label><input type="checkbox" id="returnDepot" style="width:auto"> Entregador volta para a base no fim</label>
+        <label><input type="checkbox" id="returnDepot" style="width:auto"> Entregador volta ao ponto de partida no fim</label>
         <label for="waId">WhatsApp Cloud API: phone_number_id (opcional)</label>
         <input id="waId" placeholder="ex.: 109876543210">
         <button type="button" class="primary" id="saveSettings" style="margin-top:.6rem">Salvar</button>
@@ -71,6 +70,7 @@
 
       <section>
         <h2>Entregadores</h2>
+        <p class="muted">A rota de cada um começa onde ele está. Cole a localização que ele mandou no WhatsApp em “📍 Partida”.</p>
         <ul class="list" id="drivers"></ul>
         <form id="driverForm" class="row" style="margin-top:.5rem">
           <input id="driverName" placeholder="Nome" required>
@@ -81,23 +81,27 @@
 
       <section>
         <h2>Adicionar entregas</h2>
-        <p class="muted">Cole aqui as localizações recebidas no WhatsApp: uma por linha. O texto antes do link vira o nome do cliente. Ex.: <code>Maria - https://maps.app.goo.gl/...</code></p>
-        <textarea id="bulkText" placeholder="João - https://maps.google.com/?q=-23.56,-46.65&#10;Ana -23.5489, -46.6388&#10;Rua Augusta, 1500, São Paulo"></textarea>
+        <p class="muted">Cole as localizações recebidas no WhatsApp: uma por linha. O texto antes do link vira o nome do cliente. Ex.: <code>Maria - https://maps.app.goo.gl/...</code></p>
+        <textarea id="bulkText" placeholder="João - https://maps.google.com/?q=-23.56,-46.65&#10;Ana -23.5489, -46.6388&#10;Pedro - Rua Augusta, 1500, São Paulo"></textarea>
+        <label for="bulkDriver">Entregar com</label>
+        <select id="bulkDriver" class="driver-select"></select>
         <button type="button" class="primary" id="bulkAdd" style="margin-top:.5rem;width:100%">Adicionar</button>
         <p id="bulkResult" class="muted"></p>
       </section>
 
       <section>
-        <div class="row">
-          <h2>Entregas do dia <span class="muted" id="countInfo"></span></h2>
+        <h2>Entregas do dia <span class="muted" id="countInfo"></span></h2>
+        <div class="row" id="assignBar">
+          <label style="margin:0" class="shrink"><input type="checkbox" id="selectAll" style="width:auto"> Todas</label>
+          <select id="assignDriver" class="driver-select" aria-label="Entregador"></select>
+          <button type="button" class="shrink" id="assignBtn">Atribuir</button>
         </div>
         <ul class="list" id="deliveries"></ul>
       </section>
 
       <section>
         <h2>Rotas</h2>
-        <label><input type="checkbox" id="balance" checked style="width:auto"> Dividir as entregas de forma equilibrada</label>
-        <button type="button" class="primary" id="planBtn" style="width:100%;margin-top:.5rem">🧭 Gerar rotas</button>
+        <button type="button" class="primary" id="planBtn" style="width:100%">🧭 Gerar rotas de todos</button>
         <p id="planInfo" class="muted"></p>
         <div id="routes"></div>
       </section>
