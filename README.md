@@ -111,9 +111,11 @@ Se a entrega veio sem local, o sistema usa o último local dele (de preferência
 
 ## Produção: ruas reais (OSRM) + otimizador VROOM
 
+> **Instalação passo a passo num servidor (com HTTPS, backup e firewall): veja [DEPLOY.md](DEPLOY.md).**
+
 ```bash
 cp .env.example .env
-./scripts/prepare-osrm.sh sudeste     # norte | nordeste | centro-oeste | sudeste | sul | brasil
+./scripts/prepare-osrm.sh centro-oeste   # norte | nordeste | centro-oeste | sudeste | sul | brasil
 docker compose up -d
 ```
 

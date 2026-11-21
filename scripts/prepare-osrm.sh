@@ -9,7 +9,7 @@
 # Para usar perfil de moto/bicicleta, troque car.lua por bicycle.lua (ou um perfil customizado).
 set -euo pipefail
 
-REGION="${1:-sudeste}"
+REGION="${1:-centro-oeste}"
 OSRM_IMAGE="ghcr.io/project-osrm/osrm-backend:v5.27.1"
 DIR="$(cd "$(dirname "$0")/.." && pwd)/osrm-data"
 mkdir -p "$DIR"
