@@ -7,9 +7,9 @@ let pin = null;
 let editing = false;
 let timer = null;
 
-const fmtTime = (sqlUtc) => {
-  if (!sqlUtc) return '';
-  const d = new Date(sqlUtc.replace(' ', 'T') + 'Z');
+const fmtTime = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
   return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 };
 const firstName = (s) => String(s || '').trim().split(/\s+/)[0];
@@ -111,7 +111,7 @@ function renderStatus() {
     }
     case 'entregue':
       $('title').textContent = '✅ Entregue';
-      $('subtitle').textContent = data.delivered_at ? `Sua encomenda foi entregue às ${fmtTime(data.delivered_at)}.` : 'Sua encomenda foi entregue.';
+      $('subtitle').textContent = data.completed_at ? `Sua encomenda foi entregue às ${fmtTime(data.completed_at)}.` : 'Sua encomenda foi entregue.';
       html = `<p>Obrigado por comprar com ${esc(data.operator_name)}!</p>`;
       break;
     case 'falhou':

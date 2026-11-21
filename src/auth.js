@@ -17,14 +17,16 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(expected, actual);
 }
 
-function randomToken(bytes = 24) {
-  return crypto.randomBytes(bytes).toString('base64url');
-}
+const randomToken = (bytes = 24) => crypto.randomBytes(bytes).toString('base64url');
+const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
-function createSession(db, operatorId) {
+/** Cria a sessão: o banco guarda só o hash; o token vai para o cookie. */
+async function createSession(db, userId) {
   const token = randomToken(32);
-  const expires = Date.now() + SESSION_DAYS * 86400 * 1000;
-  db.prepare('INSERT INTO sessions (token, operator_id, expires_at) VALUES (?, ?, ?)').run(token, operatorId, expires);
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + make_interval(days => $3))`,
+    [sha256(token), userId, SESSION_DAYS],
+  );
   return { token, maxAge: SESSION_DAYS * 86400 };
 }
 
@@ -37,19 +39,33 @@ function parseCookies(header = '') {
   return out;
 }
 
+/** Carrega req.user e req.org a partir do cookie de sessão. */
 function requireAuth(db) {
-  return (req, res, next) => {
-    const token = parseCookies(req.headers.cookie).sid;
-    if (!token) return res.status(401).json({ error: 'Não autenticado' });
-    const row = db.prepare(
-      `SELECT o.* FROM sessions s JOIN operators o ON o.id = s.operator_id
-       WHERE s.token = ? AND s.expires_at > ?`
-    ).get(token, Date.now());
-    if (!row) return res.status(401).json({ error: 'Sessão expirada' });
-    req.operator = row;
-    req.sessionToken = token;
-    next();
+  return async (req, res, next) => {
+    try {
+      const token = parseCookies(req.headers.cookie).sid;
+      if (!token) return res.status(401).json({ error: 'Não autenticado' });
+      const row = await db.one(
+        `SELECT u.id AS user_id, u.name AS user_name, u.email, u.role, o.*
+         FROM sessions s JOIN users u ON u.id = s.user_id JOIN organizations o ON o.id = u.org_id
+         WHERE s.token_hash = $1 AND s.expires_at > now()`,
+        [sha256(token)],
+      );
+      if (!row) return res.status(401).json({ error: 'Sessão expirada' });
+      const { user_id, user_name, email, role, ...org } = row;
+      req.user = { id: user_id, name: user_name, email, role };
+      req.org = org;
+      req.sessionHash = sha256(token);
+      next();
+    } catch (e) {
+      next(e);
+    }
   };
 }
 
-module.exports = { hashPassword, verifyPassword, randomToken, createSession, parseCookies, requireAuth };
+function requireOwner(req, res, next) {
+  if (req.user?.role !== 'dono') return res.status(403).json({ error: 'Apenas o dono da conta pode fazer isso.' });
+  next();
+}
+
+module.exports = { hashPassword, verifyPassword, randomToken, sha256, createSession, parseCookies, requireAuth, requireOwner };

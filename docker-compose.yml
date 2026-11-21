@@ -1,4 +1,4 @@
-# Sobe o RotaFácil completo: app + OSRM (ruas reais do OpenStreetMap) + VROOM (otimizador).
+# Sobe o RotaFácil completo: app + PostgreSQL + OSRM (ruas reais do OpenStreetMap) + VROOM (otimizador).
 # Antes do primeiro "docker compose up", prepare o mapa da região:
 #   ./scripts/prepare-osrm.sh sudeste
 services:
@@ -11,13 +11,31 @@ services:
       - path: .env
         required: false
     environment:
+      DATABASE_URL: postgres://rotafacil:${POSTGRES_PASSWORD:-troque-esta-senha}@db:5432/rotafacil
       OSRM_URL: http://osrm:5000
       VROOM_URL: http://vroom:3000
-    volumes:
-      - ./data:/app/data
     depends_on:
-      - osrm
-      - vroom
+      db:
+        condition: service_healthy
+      osrm:
+        condition: service_started
+      vroom:
+        condition: service_started
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rotafacil
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-troque-esta-senha}
+      POSTGRES_DB: rotafacil
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rotafacil -d rotafacil"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   osrm:
     image: ghcr.io/project-osrm/osrm-backend:v5.27.1
@@ -31,3 +49,6 @@ services:
     restart: unless-stopped
     # O app envia a matriz de distâncias pronta (calculada pelo OSRM), então o VROOM
     # não precisa de configuração de roteamento.
+
+volumes:
+  pgdata:

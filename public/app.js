@@ -4,19 +4,16 @@ const state = { me: null, drivers: [], deliveries: [], routes: [], picking: null
 let map;
 let layers;
 
-const localToday = () => {
-  const d = new Date();
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-};
+const isOwner = () => state.me?.user?.role === 'dono';
 const driverById = (id) => state.drivers.find((d) => d.id === id);
 const driverColor = (id) => {
   const i = state.drivers.findIndex((d) => d.id === id);
   return i >= 0 ? COLORS[i % COLORS.length] : '#888';
 };
 const routeOf = (driverId) => state.routes.find((r) => r.driver_id === driverId);
-const ago = (sqlDate) => {
-  if (!sqlDate) return '';
-  const min = Math.round((Date.now() - new Date(sqlDate.replace(' ', 'T') + 'Z')) / 60000);
+const ago = (iso) => {
+  if (!iso) return '';
+  const min = Math.round((Date.now() - new Date(iso)) / 60000);
   return min < 1 ? 'agora' : min < 60 ? `há ${min} min` : `há ${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
 };
 
@@ -35,7 +32,7 @@ $('authForm').addEventListener('submit', async (e) => {
   try {
     await api(`/api/auth/${authMode}`, {
       method: 'POST',
-      body: { name: $('authName').value, email: $('authEmail').value, password: $('authPassword').value },
+      body: { org_name: $('authOrg').value, user_name: $('authName').value, email: $('authEmail').value, password: $('authPassword').value },
     });
     await start();
   } catch (err) {
@@ -65,8 +62,9 @@ async function start() {
     layers = L.layerGroup().addTo(map);
     map.on('click', onMapClick);
   }
-  $('date').value = $('date').value || localToday();
+  $('date').value = $('date').value || state.me.today;
   fillSettings();
+  loadUsers();
   await refresh(true);
 }
 
@@ -100,8 +98,18 @@ function fillSettings() {
   const m = state.me;
   $('startTime').value = m.start_time;
   $('serviceMin').value = m.service_minutes;
-  $('returnDepot').checked = m.return_to_depot;
+  $('returnStart').checked = m.return_to_start;
+  $('timezone').value = m.timezone;
+  $('retention').value = m.retention_days;
   $('waId').value = m.whatsapp_phone_number_id || '';
+  // só o dono altera preferências e equipe
+  const owner = isOwner();
+  document.querySelectorAll('#settings input, #settings select, #saveSettings, #depotFromInput, #depotPick')
+    .forEach((el) => { if (!el.closest('#custSearch, #custSearchBtn') && el.id !== 'custSearch') el.disabled = !owner; });
+  $('custSearch').disabled = false;
+  $('custSearchBtn').disabled = false;
+  $('ownerOnly').classList.toggle('hidden', owner);
+  document.querySelectorAll('.owner-only').forEach((el) => el.classList.toggle('hidden', !owner));
   $('depotInfo').textContent = m.depot_lat != null
     ? `Base: ${m.depot_address || ''} (${m.depot_lat.toFixed(5)}, ${m.depot_lng.toFixed(5)})`
     : 'Sem base padrão.';
@@ -109,16 +117,19 @@ function fillSettings() {
 $('toggleSettings').addEventListener('click', () => $('settings').classList.toggle('hidden'));
 
 async function saveSettings(extra = {}) {
-  state.me = await api('/api/settings', {
+  const org = await api('/api/settings', {
     method: 'PUT',
     body: {
       start_time: $('startTime').value || '08:00',
       service_minutes: $('serviceMin').value,
-      return_to_depot: $('returnDepot').checked,
+      return_to_start: $('returnStart').checked,
+      timezone: $('timezone').value,
+      retention_days: $('retention').value,
       whatsapp_phone_number_id: $('waId').value,
       ...extra,
     },
   });
+  state.me = { ...state.me, ...org };
   fillSettings();
   render();
 }
@@ -147,9 +158,53 @@ async function onMapClick(e) {
     await saveSettings({ depot_lat: lat, depot_lng: lng, depot_address: 'Marcado no mapa' });
     toast('Base padrão definida.');
   } else if (p.type === 'driver') {
-    await setDriverStart(p.id, lat, lng, 'Marcado no mapa');
+    await setDriverStart(p.id, lat, lng, 'Marcado no mapa', 'mapa');
   }
 }
+
+// ---------- equipe ----------
+async function loadUsers() {
+  const users = await api('/api/users');
+  $('users').innerHTML = users.map((u) => `
+    <li><div class="grow"><div class="title">${esc(u.name)} <span class="chip">${u.role}</span></div><div class="muted">${esc(u.email)}</div></div>
+    ${isOwner() && u.id !== state.me.user.id ? `<button class="small danger" data-user-del="${u.id}" title="Remover acesso">✕</button>` : ''}</li>`).join('');
+}
+$('userForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/users', { method: 'POST', body: { name: $('userName').value, email: $('userEmail').value, password: $('userPassword').value, role: $('userRole').value } });
+    toast('Acesso criado. Passe o e-mail e a senha inicial para a pessoa.');
+    ['userName', 'userEmail', 'userPassword'].forEach((id) => { $(id).value = ''; });
+    loadUsers();
+  } catch (err) { toast(err.message); }
+});
+$('users').addEventListener('click', async (e) => {
+  const id = e.target.dataset.userDel;
+  if (id && confirm('Remover o acesso desta pessoa?')) {
+    await api(`/api/users/${id}`, { method: 'DELETE' }).catch((err) => toast(err.message));
+    loadUsers();
+  }
+});
+
+// ---------- clientes (LGPD) ----------
+async function searchCustomers() {
+  const list = await api(`/api/customers?q=${encodeURIComponent($('custSearch').value.trim())}`);
+  $('customers').innerHTML = list.length ? list.map((c) => `
+    <li><div class="grow"><div class="title">${esc(c.name || 'Sem nome')}</div>
+      <div class="muted">${esc(c.phone || 'sem telefone')} · ${c.deliveries} entrega(s)${c.last_date ? ` · última ${c.last_date.split('-').reverse().join('/')}` : ''}</div></div>
+      ${isOwner() ? `<button class="small danger" data-cust-del="${c.id}">Apagar dados</button>` : ''}</li>`).join('')
+    : '<li class="muted">Nenhum cliente encontrado.</li>';
+}
+$('custSearchBtn').addEventListener('click', () => searchCustomers().catch((e) => toast(e.message)));
+$('custSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('custSearchBtn').click(); } });
+$('customers').addEventListener('click', async (e) => {
+  const id = e.target.dataset.custDel;
+  if (!id || !confirm('Apagar nome, telefone e localizações deste cliente? Isso não pode ser desfeito. As entregas continuam nos números, sem identificar a pessoa.')) return;
+  await api(`/api/customers/${id}`, { method: 'DELETE' }).catch((err) => toast(err.message));
+  toast('Dados do cliente apagados.');
+  searchCustomers();
+  refresh();
+});
 
 // ---------- entregadores ----------
 $('driverForm').addEventListener('submit', async (e) => {
@@ -162,9 +217,9 @@ $('driverForm').addEventListener('submit', async (e) => {
   } catch (err) { toast(err.message); }
 });
 
-async function setDriverStart(id, lat, lng, address) {
+async function setDriverStart(id, lat, lng, address, source) {
   try {
-    await api(`/api/drivers/${id}`, { method: 'PUT', body: { start_lat: lat, start_lng: lng, start_address: address } });
+    await api(`/api/drivers/${id}`, { method: 'PUT', body: { start_lat: lat, start_lng: lng, start_address: address, start_source: source } });
     const d = driverById(id);
     const hasRoute = routeOf(id);
     toast(hasRoute ? `Partida de ${d?.name} atualizada. Clique em “Gerar rota” para recalcular.` : `Partida de ${d?.name} definida.`);
@@ -179,9 +234,10 @@ function renderDrivers() {
   }
   const m = state.me;
   $('drivers').innerHTML = state.drivers.length ? state.drivers.map((d) => {
-    const start = d.start_lat != null
-      ? `📍 ${esc(d.start_address || 'Partida definida')} · ${ago(d.start_updated_at)}`
-      : m.depot_lat != null ? '📍 Sai da base padrão' : '<span class="status-falhou">⚠️ Sem ponto de partida</span>';
+    const fallback = m.depot_lat != null ? '📍 Sai da base padrão' : '<span class="status-falhou">⚠️ Sem ponto de partida</span>';
+    const start = d.start_lat == null ? fallback
+      : d.start_stale ? `<span class="status-falhou">⚠️ Posição antiga (${ago(d.start_updated_at)}): atualize.</span> ${fallback}`
+        : `📍 ${esc(d.start_address || 'Partida definida')} · ${ago(d.start_updated_at)}`;
     return `
     <li>
       <span class="badge" style="background:${driverColor(d.id)}">${counts[d.id] || 0}</span>
@@ -221,7 +277,7 @@ $('drivers').addEventListener('click', async (e) => {
     if (!input) return;
     const r = await api('/api/parse', { method: 'POST', body: { input } });
     if (r.error) return toast(r.error);
-    await setDriverStart(d.id, r.lat, r.lng, r.address || 'Localização do WhatsApp');
+    await setDriverStart(d.id, r.lat, r.lng, r.address || 'Localização do WhatsApp', 'whatsapp');
   } else if (b.dataset.startMap) {
     const d = driverById(Number(b.dataset.startMap));
     state.picking = { type: 'driver', id: d.id };
@@ -264,12 +320,14 @@ $('linkForm').addEventListener('submit', async (e) => {
   const name = $('linkName').value.trim();
   if (!name) return toast('Informe o nome do cliente ou o número do pedido.');
   try {
-    const { delivery } = await api('/api/deliveries', {
+    const { delivery, recurring } = await api('/api/deliveries', {
       method: 'POST',
       body: { date: $('date').value, customer_name: name, phone: $('linkPhone').value, driver_id: $('linkDriver').value || null },
     });
     const token = await getLink(delivery.id);
-    $('linkResult').innerHTML = `<p class="muted" style="margin:.6rem 0 0">Link criado para <b>${esc(name)}</b>:</p>${shareBox(delivery, token)}`;
+    $('linkResult').innerHTML = `<p class="muted" style="margin:.6rem 0 0">Link criado para <b>${esc(name)}</b>:</p>`
+      + (recurring ? '<p class="chip ok" style="margin:.3rem 0">Cliente recorrente: já usamos o último local dele. O link serve para confirmar ou mudar.</p>' : '')
+      + shareBox(delivery, token);
     $('linkName').value = '';
     $('linkPhone').value = '';
     await refresh();
@@ -445,7 +503,7 @@ function render(fit = false) {
     if (r.geometry) L.geoJSON(r.geometry, { style: { color: driverColor(r.driver_id), weight: 5, opacity: 0.75 } }).addTo(layers);
   }
   for (const dr of state.drivers) {
-    if (dr.start_lat == null) continue;
+    if (dr.start_lat == null || dr.start_stale) continue;
     L.marker([dr.start_lat, dr.start_lng], { icon: driverStartIcon(driverColor(dr.id)), zIndexOffset: 1000 })
       .bindPopup(`<b>${esc(dr.name)}</b><br>Ponto de partida ${esc(ago(dr.start_updated_at))}`).addTo(layers);
     bounds.push([dr.start_lat, dr.start_lng]);

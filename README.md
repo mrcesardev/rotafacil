@@ -54,18 +54,60 @@ Regras de segurança:
 - depois que a encomenda sai para entrega, o cliente não consegue mais mudar o local;
 - há limite de tentativas por IP.
 
-## Rodando localmente (modo simples)
+## Rodando localmente
 
-Requer Node.js 22.13+.
+Requer **Node.js 20+** e **PostgreSQL 14+**.
 
 ```bash
+# banco (exemplo com o psql como superusuário)
+createuser -P rotafacil            # senha: rotafacil
+createdb -O rotafacil rotafacil
+
 npm install
-npm start            # http://localhost:3000
-npm test
+cp .env.example .env               # ajuste DATABASE_URL se precisar
+npm start                          # http://localhost:3000 (migrações rodam sozinhas)
+npm test                           # usa um schema temporário no mesmo banco
 ```
 
-Sem nenhum serviço extra, o sistema usa o **otimizador embutido** com **distâncias estimadas**
+Sem OSRM e VROOM, o sistema usa o **otimizador embutido** com **distâncias estimadas**
 (linha reta × fator de desvio urbano). Serve para testar e para operações pequenas.
+
+## Modelo de dados
+
+```
+organizations ─┬─< users (dono | operador) ──< sessions (só o hash do token)
+               ├─< drivers ──< driver_positions        (histórico de onde o entregador estava)
+               │      └──< routes (1 por entregador/dia, link estável)
+               │              └──< route_plans (versão 1, 2, 3… a cada geração/recálculo)
+               │                      └──< route_stops (ordem + previsão de cada parada)
+               ├─< customers ──< customer_places        (locais salvos, reaproveitados)
+               │      └──< deliveries ── driver_id → drivers (atribuição do operador)
+               └─< events                                (tudo que acontece, para relatórios)
+```
+
+**Regras de projeto:**
+- **Isolamento entre clientes do SaaS:** toda tabela tem `org_id`, e nenhuma consulta cruza empresas.
+- **Datas:** todo instante é `timestamptz` (UTC). `date` é o dia no **fuso da empresa** (configurável),
+  e as previsões são mostradas no horário local dela.
+- **Nada de histórico sobrescrito:** recalcular a rota cria uma nova versão, e posições, mudanças de status e
+  atribuições ficam em `events`. Ao marcar uma entrega, o GPS do celular do entregador é guardado.
+- **Rota e atribuição não divergem:** a view `current_stops` só considera uma parada da versão atual se a
+  entrega ainda for daquele entregador.
+- **Banco recusa dados inválidos:** `CHECK`s de status, coordenadas, papéis e coerência
+  (ex.: entrega concluída sempre tem `completed_at`).
+- **Migrações versionadas:** `src/migrations/NNN_*.sql`, aplicadas em ordem na inicialização,
+  registradas em `schema_migrations`, com trava para dois servidores não migrarem juntos.
+
+**Cliente recorrente:** ao criar uma entrega com um telefone já conhecido, o cliente é reaproveitado.
+Se a entrega veio sem local, o sistema usa o último local dele (de preferência um que ele mesmo confirmou).
+
+**LGPD:**
+- O aceite do cliente guarda data e **versão do termo**.
+- Os dados pessoais (nome, telefone, localização, observações) são apagados automaticamente depois do
+  **prazo de retenção** da empresa (padrão 365 dias; a limpeza roda ao iniciar e a cada 6 h, ou com
+  `npm run db:purge`). Ficam só os números agregados.
+- Em ⚙️ Configurar → Clientes, o dono atende um **pedido de exclusão** de um cliente específico.
+- Os eventos nunca guardam nome, telefone ou endereço.
 
 ## Produção: ruas reais (OSRM) + otimizador VROOM
 
@@ -108,8 +150,11 @@ também são aproveitadas. Bibliotecas não oficiais (Baileys etc.) não são us
 ```
 src/
   server.js            API (Express) + webhook do WhatsApp
-  db.js                SQLite (node:sqlite, sem dependência nativa)
-  auth.js              contas de operador e sessões
+  db.js                PostgreSQL (pool, transações, migrações versionadas)
+  migrations/          esquema do banco, um arquivo por versão
+  domain.js            fuso horário, eventos, clientes recorrentes, consultas, retenção LGPD
+  planning.js          gera a versão nova da rota de um entregador
+  auth.js              senhas, sessões (hash) e papéis (dono/operador)
   location.js          leitura de links/coordenadas/endereços do WhatsApp
   recipient.js         área pública do destinatário (marcar local e acompanhar)
   routing/matrix.js    matriz de tempos/distâncias (OSRM ou estimativa)
@@ -123,5 +168,5 @@ test/                  testes (node --test)
 - Janelas de horário por entrega ("só depois das 14h") e prioridade.
 - Sugestão automática de distribuição (opcional) para quando o operador quiser ajuda.
 - Perfis moto × carro (velocidades diferentes).
-- Planos e cobrança (assinatura) para virar SaaS aberto.
+- Planos e cobrança (assinatura) para virar SaaS aberto (tabela `subscriptions`).
 - Histórico e relatórios (km rodados, entregas por entregador, falhas).

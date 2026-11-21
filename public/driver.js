@@ -79,13 +79,27 @@ document.getElementById('stops').addEventListener('click', async (e) => {
   }
   b.disabled = true;
   try {
-    await api(`/api/driver/${token}/stops/${b.dataset.id}`, { method: 'POST', body: { status: b.dataset.status, notes } });
+    // posição de onde a entrega foi feita: corrige pinos errados no futuro
+    const gps = b.dataset.status === 'pendente' ? null : await quickPosition();
+    await api(`/api/driver/${token}/stops/${b.dataset.id}`, {
+      method: 'POST',
+      body: { status: b.dataset.status, notes, ...(gps ? { lat: gps.latitude, lng: gps.longitude } : {}) },
+    });
     await load();
   } catch (err) {
     toast(err.message);
     b.disabled = false;
   }
 });
+
+/** Posição rápida (até 4 s, aceita leitura de até 2 min); sem GPS, segue sem ela. */
+function quickPosition() {
+  if (!navigator.geolocation) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition((p) => resolve(p.coords), () => resolve(null),
+      { enableHighAccuracy: true, timeout: 4000, maximumAge: 120000 });
+  });
+}
 
 document.getElementById('recalc').addEventListener('click', () => {
   const btn = document.getElementById('recalc');

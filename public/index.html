@@ -18,8 +18,10 @@
       </div>
       <form id="authForm">
         <div id="nameField" class="hidden">
-          <label for="authName">Nome da empresa</label>
-          <input id="authName" autocomplete="organization">
+          <label for="authOrg">Nome da empresa</label>
+          <input id="authOrg" autocomplete="organization">
+          <label for="authName">Seu nome</label>
+          <input id="authName" autocomplete="name">
         </div>
         <label for="authEmail">E-mail</label>
         <input id="authEmail" type="email" autocomplete="email" required>
@@ -62,10 +64,52 @@
           <div><label for="startTime">Horário de saída</label><input id="startTime" type="time"></div>
           <div><label for="serviceMin">Min. por entrega</label><input id="serviceMin" type="number" min="0" max="120"></div>
         </div>
-        <label><input type="checkbox" id="returnDepot" style="width:auto"> Entregador volta ao ponto de partida no fim</label>
+        <label><input type="checkbox" id="returnStart" style="width:auto"> Entregador volta ao ponto de partida no fim</label>
+        <div class="row">
+          <div>
+            <label for="timezone">Fuso horário</label>
+            <select id="timezone">
+              <option value="America/Sao_Paulo">Brasília (SP, RJ, MG, Sul, NE…)</option>
+              <option value="America/Manaus">Amazonas (Manaus)</option>
+              <option value="America/Cuiaba">Mato Grosso (Cuiabá)</option>
+              <option value="America/Campo_Grande">Mato Grosso do Sul</option>
+              <option value="America/Porto_Velho">Rondônia</option>
+              <option value="America/Boa_Vista">Roraima</option>
+              <option value="America/Rio_Branco">Acre</option>
+              <option value="America/Noronha">Fernando de Noronha</option>
+            </select>
+          </div>
+          <div>
+            <label for="retention">Guardar dados pessoais por (dias)</label>
+            <input id="retention" type="number" min="30" max="3650">
+          </div>
+        </div>
         <label for="waId">WhatsApp Cloud API: phone_number_id (opcional)</label>
         <input id="waId" placeholder="ex.: 109876543210">
+        <p class="muted hidden" id="ownerOnly">Só o dono da conta pode alterar as preferências.</p>
         <button type="button" class="primary" id="saveSettings" style="margin-top:.6rem">Salvar</button>
+
+        <h2 style="margin-top:1.2rem">Equipe</h2>
+        <ul class="list" id="users"></ul>
+        <form id="userForm" class="owner-only" novalidate>
+          <div class="row">
+            <input id="userName" placeholder="Nome" required>
+            <input id="userEmail" type="email" placeholder="E-mail" required>
+          </div>
+          <div class="row" style="margin-top:.5rem">
+            <input id="userPassword" type="text" placeholder="Senha inicial (mín. 8)" required>
+            <select id="userRole" class="shrink" style="width:auto"><option value="operador">Operador</option><option value="dono">Dono</option></select>
+            <button class="shrink">Adicionar</button>
+          </div>
+        </form>
+
+        <h2 style="margin-top:1.2rem">Clientes (LGPD)</h2>
+        <p class="muted">Dados pessoais são apagados sozinhos depois do prazo acima. Para atender um pedido de exclusão, busque o cliente e apague.</p>
+        <div class="row">
+          <input id="custSearch" placeholder="Nome ou telefone">
+          <button type="button" class="shrink" id="custSearchBtn">Buscar</button>
+        </div>
+        <ul class="list" id="customers"></ul>
       </section>
 
       <section>

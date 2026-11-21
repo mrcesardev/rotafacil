@@ -5,15 +5,17 @@
   "description": "Roteirizador de entregas com vários entregadores, sem APIs pagas (OpenStreetMap + OSRM + VROOM).",
   "main": "src/server.js",
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning src/server.js",
-    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
-    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "db:purge": "node -e \"const {createDb}=require('./src/db');const db=createDb();require('./src/domain').purgeExpired(db).then(r=>{console.log(r);return db.close()})\""
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=20"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "leaflet": "^1.9.4"
+    "leaflet": "^1.9.4",
+    "pg": "^8.23.1"
   }
 }
