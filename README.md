@@ -54,6 +54,22 @@ Regras de segurança:
 - depois que a encomenda sai para entrega, o cliente não consegue mais mudar o local;
 - há limite de tentativas por IP.
 
+## Relatórios por entregador
+
+Em **📊** (no topo do painel), escolha o período (hoje, 7 ou 30 dias, este mês, mês passado ou datas livres).
+A página mostra:
+
+| Indicador | O que significa |
+|---|---|
+| **Entregas / sucesso** | Entregas que estavam na rota; sucesso = entregues ÷ (entregues + falhas) |
+| **Km planejados** | Distância da rota gerada pelo operador. Recálculos do entregador no meio do dia não entram, porque cobrem só o trecho restante |
+| **Km pelo GPS (estimado)** | Caminho do ponto de partida até onde o entregador marcou cada parada, na ordem em que marcou, com a **cobertura** (em quantas paradas o celular enviou o GPS) |
+| **No horário** | Entregues até 15 min depois da previsão; atraso médio das demais |
+| **Longe do pino** | Entregues a mais de 150 m do local cadastrado. Costuma indicar pino errado |
+
+Clicando num entregador aparece o **dia a dia** dele. O botão **Planilha (CSV)** baixa os dados diários
+no formato do Excel e do Google Planilhas em português (`;` e vírgula decimal).
+
 ## Rodando localmente
 
 Requer **Node.js 20+** e **PostgreSQL 14+**.
@@ -156,13 +172,14 @@ src/
   migrations/          esquema do banco, um arquivo por versão
   domain.js            fuso horário, eventos, clientes recorrentes, consultas, retenção LGPD
   planning.js          gera a versão nova da rota de um entregador
+  reports.js           relatório por entregador (entregas, km, pontualidade)
   auth.js              senhas, sessões (hash) e papéis (dono/operador)
   location.js          leitura de links/coordenadas/endereços do WhatsApp
   recipient.js         área pública do destinatário (marcar local e acompanhar)
   routing/matrix.js    matriz de tempos/distâncias (OSRM ou estimativa)
   routing/heuristic.js otimizador embutido da ordem das paradas (inserção + 2-opt/or-opt)
   routing/optimizer.js escolhe VROOM ou embutido, calcula horários
-public/                painel do operador, página do entregador e do destinatário (Leaflet)
+public/                painel do operador, relatórios, página do entregador e do destinatário (Leaflet)
 test/                  testes (node --test)
 ```
 
@@ -171,4 +188,3 @@ test/                  testes (node --test)
 - Sugestão automática de distribuição (opcional) para quando o operador quiser ajuda.
 - Perfis moto × carro (velocidades diferentes).
 - Planos e cobrança (assinatura) para virar SaaS aberto (tabela `subscriptions`).
-- Histórico e relatórios (km rodados, entregas por entregador, falhas).

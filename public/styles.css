@@ -132,3 +132,31 @@ button:disabled { opacity: .55; cursor: progress; }
 .stop.next { border-color: var(--accent); border-width: 2px; }
 .stop.done { opacity: .6; }
 .stop .actions { margin-top: .6rem; }
+
+/* relatórios */
+.reports { max-width: 1100px; margin: 0 auto; padding: 0 16px 2rem; }
+.reports > header { padding: 1rem 0 .6rem; }
+.reports .card { margin: .8rem 0; }
+.reports .presets button.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.reports label.inline { display: flex; align-items: center; gap: .4rem; margin: 0; color: var(--text); }
+.reports label.inline input { width: auto; flex: 1; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .6rem; margin: .6rem 0; }
+.tile { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: .8rem .9rem; min-width: 0; }
+.tile-label { font-size: .85rem; color: var(--muted); }
+.tile-value { font-size: 1.6rem; font-weight: 600; line-height: 1.2; margin: .15rem 0; font-variant-numeric: tabular-nums; }
+.tile-sub { font-size: .8rem; color: var(--muted); }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: .4rem; }
+.reports table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+.reports th, .reports td { padding: .5rem .6rem; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.reports th { font-size: .8rem; color: var(--muted); font-weight: 600; }
+.reports .num { text-align: right; font-variant-numeric: tabular-nums; }
+.reports tbody tr[data-driver] { cursor: pointer; }
+.reports tbody tr[data-driver]:hover, .reports tbody tr.sel { background: var(--bg); }
+.reports tbody tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.reports tfoot td { font-weight: 600; border-bottom: 0; }
+.reports details summary { cursor: pointer; }
+.reports details li { margin: .35rem 0; }
+.tile-sub.alert { color: var(--danger); }
+.reports .presets > button { flex: 1 1 88px; }
+.reports .filters .row > label.inline { flex: 1 1 170px; }
+.reports .filters .row > button { flex: 1 1 auto; }

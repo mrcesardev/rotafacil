@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relatórios · RotaFácil</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="reports">
+    <header class="row">
+      <h1>📊 Relatórios por entregador</h1>
+      <a href="/" class="shrink"><button type="button">← Painel</button></a>
+    </header>
+
+    <div class="card filters">
+      <div class="row presets" role="group" aria-label="Período">
+        <button type="button" data-preset="today">Hoje</button>
+        <button type="button" data-preset="7">7 dias</button>
+        <button type="button" data-preset="30">30 dias</button>
+        <button type="button" data-preset="month">Este mês</button>
+        <button type="button" data-preset="lastmonth">Mês passado</button>
+      </div>
+      <div class="row" style="margin-top:.5rem">
+        <label class="inline">De <input type="date" id="from"></label>
+        <label class="inline">Até <input type="date" id="to"></label>
+        <button type="button" class="primary shrink" id="apply">Ver</button>
+        <button type="button" class="shrink" id="csv">⬇️ Planilha (CSV)</button>
+      </div>
+    </div>
+
+    <p id="status" class="muted"></p>
+    <section id="tiles" class="tiles" aria-label="Resumo do período"></section>
+
+    <section class="card">
+      <h2>Por entregador</h2>
+      <p class="muted">Toque numa linha para ver dia a dia.</p>
+      <div class="table-wrap">
+        <table id="drivers">
+          <thead>
+            <tr>
+              <th>Entregador</th><th class="num">Dias</th><th class="num">Entregas</th><th class="num">Entregues</th>
+              <th class="num">Falhas</th><th class="num">Sucesso</th><th class="num">Km planejados</th>
+              <th class="num">Km pelo GPS</th><th class="num">No horário</th><th class="num">Atraso médio</th>
+              <th class="num">Longe do pino</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section class="card hidden" id="dailyCard">
+      <h2 id="dailyTitle"></h2>
+      <div class="table-wrap">
+        <table id="daily">
+          <thead>
+            <tr>
+              <th>Dia</th><th class="num">Entregas</th><th class="num">Entregues</th><th class="num">Falhas</th>
+              <th class="num">Pendentes</th><th class="num">Km planejados</th><th class="num">Km pelo GPS</th>
+              <th class="num">No horário</th><th class="num">Longe do pino</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <details class="card">
+      <summary><b>Como os números são calculados</b></summary>
+      <ul id="defs" class="muted"></ul>
+    </details>
+  </div>
+  <script src="/common.js"></script>
+  <script src="/reports.js"></script>
+</body>
+</html>

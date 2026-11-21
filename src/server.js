@@ -7,6 +7,7 @@ const auth = require('./auth');
 const { resolveLocation, splitBulk } = require('./location');
 const { planDriverRoute, PlanError } = require('./planning');
 const recipient = require('./recipient');
+const { driverReport } = require('./reports');
 const D = require('./domain');
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
@@ -487,6 +488,17 @@ function createApp({ db }) {
     ));
   }));
 
+  // ---------- Relatórios ----------
+  app.get('/api/reports/drivers', requireAuth, wrap(async (req, res) => {
+    const today = D.todayIn(req.org.timezone);
+    const shift = (date, days) => new Date(Date.parse(`${date}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+    const to = isDate(req.query.to) ? req.query.to : today;
+    const from = isDate(req.query.from) ? req.query.from : shift(to, -6);
+    if (from > to) throw new HttpError(400, 'A data inicial é depois da final.');
+    if (Date.parse(to) - Date.parse(from) > 366 * 86400000) throw new HttpError(400, 'Escolha um período de até 1 ano.');
+    res.json({ from, to, ...(await driverReport(db, req.org.id, from, to)) });
+  }));
+
   // ---------- Página do entregador (acesso por link, sem login) ----------
   const routeByToken = (token) => db.one(
     `SELECT r.*, dr.name AS driver_name, o.name AS operator_name, o.timezone,
@@ -588,6 +600,7 @@ function createApp({ db }) {
   app.use('/vendor/leaflet', express.static(path.dirname(require.resolve('leaflet/dist/leaflet.js')), { maxAge: '7d' }));
   app.get('/e/:token', (req, res) => res.sendFile(path.join(pub, 'driver.html')));
   app.get('/r/:token', (req, res) => res.sendFile(path.join(pub, 'recipient.html')));
+  app.get('/relatorios', (req, res) => res.sendFile(path.join(pub, 'reports.html')));
 
   app.use((err, req, res, _next) => {
     if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
