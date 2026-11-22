@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test --test-concurrency=1 test/*.test.js",
-    "db:purge": "node -e \"const {createDb}=require('./src/db');const db=createDb();require('./src/domain').purgeExpired(db).then(r=>{console.log(r);return db.close()})\""
+    "db:purge": "node -e \"const {createDb}=require('./src/db');const db=createDb();require('./src/domain').purgeExpired(db).then(r=>{console.log(r);return db.close()})\"",
+    "demo": "node scripts/seed-demo.js"
   },
   "engines": {
     "node": ">=20"

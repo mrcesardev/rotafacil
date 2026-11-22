@@ -94,7 +94,11 @@ npm install
 cp .env.example .env               # ajuste DATABASE_URL se precisar
 npm start                          # http://localhost:3000 (migrações rodam sozinhas)
 npm test                           # usa um schema temporário no mesmo banco
+npm run demo                       # (com o servidor rodando) cria uma conta de demonstração
 ```
+
+O `npm run demo` cria a conta **demo@rotafacil.local / demo1234**: 3 entregadores em Goiânia, uma semana
+de entregas (hoje com metade pendente) e um link de cliente para testar. Ele não mexe em outras contas.
 
 Sem OSRM e VROOM, o sistema usa o **otimizador embutido** com **distâncias estimadas**
 (linha reta × fator de desvio urbano). Serve para testar e para operações pequenas.
