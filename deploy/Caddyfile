@@ -1,0 +1,19 @@
+# HTTPS automático (Let's Encrypt) para o domínio em DOMAIN.
+# Sem DOMAIN, atende em http://localhost (para testar no próprio servidor).
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN:localhost} {
+	encode zstd gzip
+	reverse_proxy app:3000
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# GPS liberado só para o próprio site (páginas do entregador e do cliente)
+		Permissions-Policy "geolocation=(self), camera=(), microphone=()"
+		-Server
+	}
+}

@@ -1,1 +1,205 @@
-# rotafacil
+# 🚚 RotaFácil
+
+Roteirizador de entregas para operadores com **vários entregadores**, sem APIs pagas.
+O operador recebe as localizações dos clientes no WhatsApp, cola no sistema, e o RotaFácil
+divide as entregas entre os entregadores e monta a melhor ordem de cada rota. A meta é
+menos quilômetros, menos tempo e menos combustível.
+
+## Como funciona
+
+O operador decide **quais entregas vão com cada entregador**. O sistema calcula a
+**melhor ordem de cada rota, saindo do ponto onde aquele entregador está**.
+
+1. **Cadastrar os entregadores.**
+2. **Definir onde cada entregador está** (📍 Partida): cole a localização que ele mandou no WhatsApp
+   ou marque no mapa. Se não houver, a rota sai da *base padrão* (opcional, em ⚙️ Configurar).
+3. **Colar as localizações dos clientes**, uma por linha, já escolhendo o entregador ("Entregar com"),
+   ou deixando sem entregador para distribuir depois. O sistema entende:
+   - localização fixa compartilhada ou exportada (`localização: https://maps.google.com/?q=...`);
+   - links do Google Maps, longos ou curtos (`maps.app.goo.gl`), Waze, Apple Maps, OpenStreetMap e `geo:`;
+   - coordenadas soltas (`-23.5505, -46.6333`);
+   - endereço em texto (geocodificado pelo OpenStreetMap; confira o pino no mapa).
+
+   O texto antes do link vira o nome do cliente (`Maria - https://...`). Os pinos podem ser **arrastados** para corrigir o local.
+4. **Distribuir:** troque o entregador de cada entrega pelo seletor, ou marque várias e clique em **Atribuir**.
+5. **Gerar as rotas:**
+   - **individual:** botão "Gerar rota" no card do entregador;
+   - **todos:** "Gerar rotas de todos". Cada rota sai da posição do seu entregador.
+6. **Enviar a rota no WhatsApp.** Cada entregador recebe um link próprio (não precisa de login) com o mapa,
+   a ordem das paradas, a previsão de chegada, atalhos para **Google Maps / Waze**, e os botões
+   **Entregue / Não entregue**. O link continua o mesmo quando a rota é recalculada.
+7. **No meio do dia**, o entregador toca em **"Recalcular a partir de onde estou"**. O celular manda a posição
+   do GPS e as paradas pendentes são reordenadas a partir dali. As já feitas mantêm a numeração.
+
+## Link do destinatário (o cliente marca onde quer receber)
+
+Em vez de pedir a localização pelo WhatsApp, o operador pode mandar um **link único da entrega**:
+
+1. No painel, em **"Pedir localização ao cliente"**, informe o nome (ou nº do pedido) e o WhatsApp do cliente
+   e clique em **Criar link**. Para uma entrega que já existe, use o botão 🔗 na lista.
+2. Clique em **Enviar no WhatsApp**. A mensagem já vai pronta com o link.
+3. O cliente abre no celular e marca o local:
+   - botão **"Usar minha localização atual"** (GPS), busca por endereço, ou toque no mapa;
+   - arrasta o pino até a entrada certa;
+   - escreve a referência ("apto 32, portão azul") e aceita o uso dos dados (LGPD).
+4. No painel, a entrega passa de **⏳ aguardando cliente** para **✅ confirmado pelo cliente** sozinha
+   (atualiza a cada 30 s). A referência aparece também para o entregador.
+5. **Pelo mesmo link, o cliente acompanha a entrega:**
+   - quando a rota é gerada: *"Saiu para entrega com Carlos · faltam 2 entregas antes da sua · previsão ≈ 14:20"*;
+   - depois: *"Entregue às 14:23"*, ou *"Não conseguimos entregar"*.
+
+Regras de segurança:
+- o link só existe se o operador criou a entrega, e o token é aleatório (não dá para adivinhar);
+- o cliente não vê observações internas nem as outras paradas da rota;
+- depois que a encomenda sai para entrega, o cliente não consegue mais mudar o local;
+- há limite de tentativas por IP.
+
+## Relatórios por entregador
+
+Em **📊** (no topo do painel), escolha o período (hoje, 7 ou 30 dias, este mês, mês passado ou datas livres).
+A página mostra:
+
+| Indicador | O que significa |
+|---|---|
+| **Entregas / sucesso** | Entregas que estavam na rota; sucesso = entregues ÷ (entregues + falhas) |
+| **Km planejados** | Distância da rota gerada pelo operador. Recálculos do entregador no meio do dia não entram, porque cobrem só o trecho restante |
+| **Km pelo GPS (estimado)** | Caminho do ponto de partida até onde o entregador marcou cada parada, na ordem em que marcou, com a **cobertura** (em quantas paradas o celular enviou o GPS) |
+| **No horário** | Entregues até 15 min depois da previsão; atraso médio das demais |
+| **Longe do pino** | Entregues a mais de 150 m do local cadastrado. Costuma indicar pino errado |
+
+**Entregas longe do pino:** a mesma página lista cada entrega marcada a mais de 150 m do local cadastrado,
+com um mapa do pino, de onde o entregador marcou e de um marcador arrastável. Para cada uma, o operador escolhe:
+
+- **Usar local do GPS:** o local certo é onde o entregador marcou;
+- **Ajustar no mapa:** arrasta o marcador até a entrada certa;
+- **Pino estava certo:** por exemplo, o entregador marcou de longe.
+
+Ao corrigir, o novo local vira o **local verificado** do cliente, e o próximo pedido dele já usa esse local.
+As entregas pendentes dele que ainda estavam no pino antigo são corrigidas junto. A entrega concluída não muda:
+o histórico continua como aconteceu, marcado como revisado.
+
+Clicando num entregador aparece o **dia a dia** dele. O botão **Planilha (CSV)** baixa os dados diários
+no formato do Excel e do Google Planilhas em português (`;` e vírgula decimal).
+
+## Rodando localmente
+
+Requer **Node.js 20+** e **PostgreSQL 14+**.
+
+```bash
+# banco (exemplo com o psql como superusuário)
+createuser -P rotafacil            # senha: rotafacil
+createdb -O rotafacil rotafacil
+
+npm install
+cp .env.example .env               # ajuste DATABASE_URL se precisar
+npm start                          # http://localhost:3000 (migrações rodam sozinhas)
+npm test                           # usa um schema temporário no mesmo banco
+npm run demo                       # (com o servidor rodando) cria uma conta de demonstração
+```
+
+O `npm run demo` cria a conta **demo@rotafacil.local / demo1234**: 3 entregadores em Goiânia, uma semana
+de entregas (hoje com metade pendente) e um link de cliente para testar. Ele não mexe em outras contas.
+
+Sem OSRM e VROOM, o sistema usa o **otimizador embutido** com **distâncias estimadas**
+(linha reta × fator de desvio urbano). Serve para testar e para operações pequenas.
+
+## Modelo de dados
+
+```
+organizations ─┬─< users (dono | operador) ──< sessions (só o hash do token)
+               ├─< drivers ──< driver_positions        (histórico de onde o entregador estava)
+               │      └──< routes (1 por entregador/dia, link estável)
+               │              └──< route_plans (versão 1, 2, 3… a cada geração/recálculo)
+               │                      └──< route_stops (ordem + previsão de cada parada)
+               ├─< customers ──< customer_places        (locais salvos, reaproveitados)
+               │      └──< deliveries ── driver_id → drivers (atribuição do operador)
+               └─< events                                (tudo que acontece, para relatórios)
+```
+
+**Regras de projeto:**
+- **Isolamento entre clientes do SaaS:** toda tabela tem `org_id`, e nenhuma consulta cruza empresas.
+- **Datas:** todo instante é `timestamptz` (UTC). `date` é o dia no **fuso da empresa** (configurável),
+  e as previsões são mostradas no horário local dela.
+- **Nada de histórico sobrescrito:** recalcular a rota cria uma nova versão, e posições, mudanças de status e
+  atribuições ficam em `events`. Ao marcar uma entrega, o GPS do celular do entregador é guardado.
+- **Rota e atribuição não divergem:** a view `current_stops` só considera uma parada da versão atual se a
+  entrega ainda for daquele entregador.
+- **Banco recusa dados inválidos:** `CHECK`s de status, coordenadas, papéis e coerência
+  (ex.: entrega concluída sempre tem `completed_at`).
+- **Migrações versionadas:** `src/migrations/NNN_*.sql`, aplicadas em ordem na inicialização,
+  registradas em `schema_migrations`, com trava para dois servidores não migrarem juntos.
+
+**Cliente recorrente:** ao criar uma entrega com um telefone já conhecido, o cliente é reaproveitado.
+Se a entrega veio sem local, o sistema usa o último local dele (de preferência um que ele mesmo confirmou).
+
+**LGPD:**
+- O aceite do cliente guarda data e **versão do termo**.
+- Os dados pessoais (nome, telefone, localização, observações) são apagados automaticamente depois do
+  **prazo de retenção** da empresa (padrão 365 dias; a limpeza roda ao iniciar e a cada 6 h, ou com
+  `npm run db:purge`). Ficam só os números agregados.
+- Em ⚙️ Configurar → Clientes, o dono atende um **pedido de exclusão** de um cliente específico.
+- Os eventos nunca guardam nome, telefone ou endereço.
+
+## Produção: ruas reais (OSRM) + otimizador VROOM
+
+> **Instalação passo a passo num servidor (com HTTPS, backup e firewall): veja [DEPLOY.md](DEPLOY.md).**
+
+```bash
+cp .env.example .env
+./scripts/prepare-osrm.sh centro-oeste   # norte | nordeste | centro-oeste | sudeste | sul | brasil
+docker compose up -d
+```
+
+- **OSRM** calcula tempos e distâncias pelas ruas do OpenStreetMap e desenha a rota no mapa.
+- **VROOM** é o otimizador de rotas open source usado em produção por várias empresas.
+- Se algum dos dois cair, o app volta sozinho para o modo simples.
+
+**Servidor:** uma região (ex.: Sudeste) roda bem num VPS de 4 a 8 GB de RAM. O Brasil inteiro precisa
+de cerca de 16 GB durante a preparação. Atualize o mapa de tempos em tempos rodando o script de novo.
+
+### Atenção em produção
+- **Tiles do mapa:** o servidor público do OpenStreetMap não permite uso comercial intenso. Configure
+  `TILE_URL` com um provedor (MapTiler, Stadia, Protomaps…) ou hospede os seus.
+- **Geocodificação de endereços:** o Nominatim público limita a 1 requisição/s. Para volume, hospede
+  o seu e configure `NOMINATIM_URL`. Localizações fixas e links não usam geocodificação.
+- Use HTTPS (`NODE_ENV=production` liga o cookie `Secure`). Sem HTTPS, o botão de GPS (entregador e cliente) não funciona.
+- Atrás de proxy reverso (Caddy/Nginx), defina `TRUST_PROXY=1` para o limite por IP usar o IP real do cliente.
+- **Satélite (opcional):** com `SATELLITE_TILE_URL`, os mapas ganham a opção "Satélite". Ela ajuda o cliente a achar a própria casa.
+
+## WhatsApp automático (API oficial da Meta)
+
+Com a **WhatsApp Cloud API**, as localizações chegam sozinhas como entregas do dia:
+
+1. Crie um app na Meta for Developers e ative o WhatsApp.
+2. No `.env`: `WHATSAPP_VERIFY_TOKEN` (um texto qualquer) e `WHATSAPP_APP_SECRET` (segredo do app).
+3. Configure o webhook: `https://SEU-DOMINIO/webhooks/whatsapp` (campo `messages`).
+4. No painel do RotaFácil, em ⚙️ Configurar, informe o `phone_number_id` do seu número.
+
+As mensagens do tipo **localização** viram entregas com o nome do contato. Mensagens de texto com link
+também são aproveitadas. Bibliotecas não oficiais (Baileys etc.) não são usadas porque o número pode ser banido.
+
+## Estrutura
+
+```
+src/
+  server.js            API (Express) + webhook do WhatsApp
+  db.js                PostgreSQL (pool, transações, migrações versionadas)
+  migrations/          esquema do banco, um arquivo por versão
+  domain.js            fuso horário, eventos, clientes recorrentes, consultas, retenção LGPD
+  planning.js          gera a versão nova da rota de um entregador
+  reports.js           relatório por entregador (entregas, km, pontualidade)
+  auth.js              senhas, sessões (hash) e papéis (dono/operador)
+  location.js          leitura de links/coordenadas/endereços do WhatsApp
+  recipient.js         área pública do destinatário (marcar local e acompanhar)
+  routing/matrix.js    matriz de tempos/distâncias (OSRM ou estimativa)
+  routing/heuristic.js otimizador embutido da ordem das paradas (inserção + 2-opt/or-opt)
+  routing/optimizer.js escolhe VROOM ou embutido, calcula horários
+public/                painel do operador, relatórios, página do entregador e do destinatário (Leaflet)
+test/                  testes (node --test)
+```
+
+## Próximos passos sugeridos
+- Janelas de horário por entrega ("só depois das 14h") e prioridade.
+- Sugestão automática de distribuição (opcional) para quando o operador quiser ajuda.
+- Perfis moto × carro (velocidades diferentes).
+- Planos e cobrança (assinatura) para virar SaaS aberto (tabela `subscriptions`).
