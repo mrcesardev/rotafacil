@@ -1,0 +1,23 @@
+# HTTPS automático (Let's Encrypt) para a API em API_DOMAIN.
+# Só /api e /webhooks são atendidos: as páginas ficam na Vercel.
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	@api path /api/* /webhooks/*
+	handle @api {
+		reverse_proxy app:3000
+	}
+	handle {
+		respond "Not found" 404
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+}

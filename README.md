@@ -143,6 +143,8 @@ Se a entrega veio sem local, o sistema usa o último local dele (de preferência
 ## Produção: ruas reais (OSRM) + otimizador VROOM
 
 > **Instalação passo a passo num servidor (com HTTPS, backup e firewall): veja [DEPLOY.md](DEPLOY.md).**
+>
+> **Com Vercel (páginas) + Supabase (banco) + VPS (API, OSRM e VROOM): veja [DEPLOY-VERCEL-SUPABASE.md](DEPLOY-VERCEL-SUPABASE.md).**
 
 ```bash
 cp .env.example .env

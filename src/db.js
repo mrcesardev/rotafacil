@@ -18,9 +18,26 @@ types.setTypeParser(20, (v) => Number(v));
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 const DEFAULT_URL = 'postgres://rotafacil:rotafacil@localhost:5432/rotafacil';
 
+/**
+ * SSL do banco. Com DATABASE_SSL_CA (caminho do certificado raiz, ex.: o
+ * "SSL certificate" do Supabase), a conexão é criptografada e o certificado do
+ * servidor é verificado. O sslmode da URL é removido nesse caso, porque o pg
+ * daria prioridade a ele e ignoraria o certificado informado.
+ */
+function sslConfig(connectionString) {
+  const caFile = process.env.DATABASE_SSL_CA;
+  if (!caFile) return { connectionString };
+  const url = new URL(connectionString);
+  url.searchParams.delete('sslmode');
+  return {
+    connectionString: url.toString(),
+    ssl: { ca: fs.readFileSync(caFile, 'utf8'), rejectUnauthorized: true },
+  };
+}
+
 function createDb({ connectionString = process.env.DATABASE_URL || DEFAULT_URL, schema } = {}) {
   const pool = new Pool({
-    connectionString,
+    ...sslConfig(connectionString),
     max: Number(process.env.DB_POOL_SIZE || 10),
     ...(schema ? { options: `-c search_path=${schema}` } : {}),
   });
