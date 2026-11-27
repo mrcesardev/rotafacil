@@ -48,7 +48,6 @@ cole a linha, deixe **sem** permissão de escrita e salve. Depois:
 apt-get update && apt-get install -y git
 git clone git@github.com:mrcesardev/rotafacil.git /opt/rotafacil
 cd /opt/rotafacil
-git checkout claude/awesome-brown-getox6   # enquanto as mudanças não estiverem na branch principal
 ```
 
 ## 4. Instalar
