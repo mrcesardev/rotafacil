@@ -66,8 +66,36 @@ No painel de DNS do domínio, crie:
 
 ## 4. VPS
 
-Acesse o servidor (`ssh root@IP_DA_VPS`) e prepare o projeto. O repositório é privado, então
-crie uma *deploy key* como no [DEPLOY.md, passo 3](DEPLOY.md#3-copiar-o-projeto-para-o-servidor). Depois:
+Acesse o servidor (`ssh root@IP_DA_VPS`). O repositório é privado, então crie uma *deploy key*
+como no [DEPLOY.md, passo 3](DEPLOY.md#3-copiar-o-projeto-para-o-servidor). Depois:
+
+```bash
+apt-get update && apt-get install -y git
+git clone git@github.com:mrcesardev/rotafacil.git /opt/rotafacil
+cd /opt/rotafacil
+sudo ./scripts/setup-vps.sh
+```
+
+O script pergunta:
+- o **domínio da API**;
+- o **e-mail**;
+- a **URL do Session pooler** (não aparece na tela enquanto você digita);
+- a **chave da MapTiler**;
+- o **certificado do Supabase**: abra o `.crt` num editor de texto, copie tudo e cole no terminal.
+
+Depois ele faz o resto sozinho:
+- instala o Docker;
+- ativa o firewall;
+- cria swap se faltar memória;
+- testa a conexão com o Supabase antes de continuar;
+- prepara o mapa (de 10 a 40 minutos);
+- sobe tudo.
+
+No fim, mostra o valor de `API_ORIGIN` para usar na Vercel.
+Se algo der errado, corrija e rode o script de novo: ele aproveita o que já foi feito.
+
+<details>
+<summary>Fazer à mão, sem o script</summary>
 
 ```bash
 # Docker e firewall (só SSH, HTTP e HTTPS)
@@ -109,6 +137,8 @@ Teste do seu computador: `https://api.suaempresa.com.br/api/health` deve respond
 
 > Com 4 GB de RAM, crie swap antes de preparar o mapa:
 > `fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`
+
+</details>
 
 ## 5. Vercel
 
@@ -153,7 +183,7 @@ e é a única no plano gratuito.
 dc stop app
 docker run --rm -v "$PWD/backups:/backups" -v "$PWD/certs:/certs" \
   -e PGSSLMODE=verify-full -e PGSSLROOTCERT=/certs/supabase-ca.crt postgres:17-alpine \
-  pg_restore -d "$(grep ^DATABASE_URL= .env | cut -d= -f2-)" --clean --if-exists --no-owner /backups/ARQUIVO.dump
+  pg_restore -d "$(grep ^DATABASE_URL= .env | cut -d= -f2- | tr -d "'")" --clean --if-exists --no-owner /backups/ARQUIVO.dump
 dc start app
 ```
 
